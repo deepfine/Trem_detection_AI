@@ -99,6 +99,85 @@ python crowd_counter.py \
 
 위 인원 수는 모델 출력이며 정답 인원과 비교한 정확도가 아니다. UCF-QNRF 기반 모델은 고밀도 군중 사진에 최적화되어 있으므로, 운영 CCTV 표본에 인원 정답을 부여한 뒤 MAE와 RMSE를 산출해야 한다.
 
+## ROI 객체 분석 Docker 실행
+
+현재 단순화된 운영 경로는 2개 선으로 구성한 ROI 내부의 객체만 검출한다. 객체 바운딩 박스의 하단 중앙점을 ROI 포함 여부의 기준점으로 사용한다. 프레임은 HTTP로 전송하지 않고 백엔드와 AI 컨테이너가 공유하는 경로에서 읽는다.
+
+```bash
+docker build -t trem-object-ai .
+
+docker run --rm --gpus all \
+  --name trem-object-ai \
+  -p 8080:8080 \
+  --add-host host.docker.internal:host-gateway \
+  -e OBJECT_DEVICE_ID=0 \
+  -e OBJECT_RESULT_URL=http://host.docker.internal:3535/object/results \
+  -v "$(pwd)/result/models/yolov8n.onnx:/app/result/models/yolov8n.onnx:ro" \
+  -v "/upload/visit_servant/analyzed:/upload/visit_servant/analyzed:ro" \
+  trem-object-ai
+```
+
+상태 확인 endpoint는 `GET /health`, 분석 요청 endpoint는 `POST /object/analysis`이다. 분석 요청은 비동기로 접수되며 HTTP 202를 반환한다.
+
+```json
+{
+  "id": 41,
+  "congestionSensorDeviceId": 27,
+  "frame_abs_path": "/upload/visit_servant/analyzed/27/frame.jpg",
+  "zone": {
+    "width": 1280,
+    "height": 720,
+    "lines": [
+      [[120, 180], [80, 650]],
+      [[1050, 170], [1200, 650]]
+    ]
+  },
+  "targetClasses": ["person", "bicycle", "motorcycle", "car", "truck", "bus"]
+}
+```
+
+`width`와 `height`는 좌표를 작성한 기준 해상도이다. 실제 이미지 해상도가 다르면 좌표를 자동으로 보정한다. `targetClasses`를 생략하면 `person`, `bicycle`, `motorcycle`, `car`, `bus`, `truck`, `backpack`, `suitcase`를 검출한다.
+
+완료 결과는 `OBJECT_RESULT_URL`로 전달한다.
+
+```json
+{
+  "id": 41,
+  "status": "COMPLETED",
+  "detectedObjectCount": 2,
+  "objects": [
+    {"class": "person", "confidence": 0.9123, "bbox": [120, 80, 260, 430]},
+    {"class": "bicycle", "confidence": 0.84, "bbox": [310, 210, 510, 460]}
+  ],
+  "raw": {
+    "method": "yolov8n_roi",
+    "inference_ms": 14.2
+  }
+}
+```
+
+## Visit Servant 연동
+
+`visit_servant_api`가 공유 경로의 JPEG를 `POST /crowd/analysis`로 넘기면, 이 서버가 DM-Count로 인원을 세고 `POST /crowd/results`로 결과를 돌려준다. 이미지 바이트는 HTTP로 받지 않는다.
+
+```bash
+python crowd_analysis_server.py \
+  --model result/models/dm_count_qnrf.pth \
+  --device cuda:0 \
+  --analyzed-dir /upload/visit_servant/analyzed \
+  --result-url http://127.0.0.1:3535/crowd/results
+```
+
+| 변수 | 기본값 | 역할 |
+|---|---|---|
+| `FRAME_ANALYZED_DIR` | `/upload/visit_servant/analyzed` | 상대경로를 붙일 루트 |
+| `CROWD_MODEL_PATH` | `result/models/dm_count_qnrf.pth` | DM-Count 가중치 |
+| `CROWD_DEVICE` | `cuda:0` | 추론 장치 |
+| `VISIT_SERVANT_RESULT_URL` | `http://api:3535/crowd/results` | 결과 회신 URL |
+| `ANALYSIS_API_KEY` | 비움 | `X-Analysis-Key` |
+
+요청 본문은 `id`, `frame_abs_path`(또는 `frame_path`), `congestionSensorDeviceId`를 사용한다. 결과는 `countedPeople`과 `status=COMPLETED|FAILED`이다.
+
 ## 통합 분석
 
 4 FPS로 얼굴 블러·객체 탐지·위험 판정을 수행하고, DM-Count는 4개 분석 프레임마다 실행한다. 이 설정에서 군중 수 갱신 주기는 1초이다.
@@ -142,6 +221,9 @@ pytest -q
 
 | 파일 | 역할 |
 |---|---|
+| `object_analysis_server.py` | 2개 선 사이의 객체 검출 및 결과 전달 서버 |
+| `crowd_analysis_server.py` | `visit_servant_api` 핸드오프 HTTP 서버 |
+| `crowd_analysis_protocol.py` | 분석 요청 경로 해석 및 결과 JSON |
 | `crowd_counter.py` | DM-Count 추론 및 영상 단독 평가 |
 | `process_blur_anomalies.py` | 얼굴 블러·객체 탐지·위험 판정·군중 계수 통합 처리 |
 | `anomaly_rules.py` | 구역 진입 및 접근 위험 규칙 |

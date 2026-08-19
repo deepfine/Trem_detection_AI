@@ -1,0 +1,13 @@
+.git
+.agents
+.pytest_cache
+__pycache__
+result
+weights
+*.pt
+*.onnx
+*.mkv
+*.avi
+*.mp4
+test_video.mkv
+cameras.json

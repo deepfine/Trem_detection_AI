@@ -214,6 +214,9 @@ def main():
     parser.add_argument("--assistive-model", type=Path, default=Path("result/models/assistive_yolov8s_worldv2.pt"))
     parser.add_argument("--history", type=int, default=5)
     parser.add_argument("--analysis-fps", type=float, help="sample the source at this rate; output video uses the same rate")
+    parser.add_argument("--crowd-model", type=Path, default=Path("result/models/dm_count_qnrf.pth"))
+    parser.add_argument("--crowd-device", default="cuda:0")
+    parser.add_argument("--crowd-interval", type=int, default=4, help="analyzed frames between DM-Count runs")
     parser.add_argument("--confirm-frames", type=int, default=3, help="consecutive detections required before an alert")
     parser.add_argument("--track-max-missed", type=int, default=10, help="frames to retain a missing track")
     parser.add_argument("--prediction-seconds", type=float, default=1.5, help="future path horizon for fast incoming alerts")
@@ -223,9 +226,12 @@ def main():
     cv2.setNumThreads(1)
     from blur_video_scrfd_gpu import detect as detect_faces
     from blur_video_scrfd_gpu import make_detector as make_face_detector
+    from crowd_counter import CrowdCounter
 
     if "CUDAExecutionProvider" not in ort.get_available_providers():
         raise RuntimeError(f"CUDAExecutionProvider unavailable: {ort.get_available_providers()}")
+    if args.crowd_interval < 1:
+        raise ValueError("crowd interval must be at least 1")
     ort.set_default_logger_severity(4)
     for path in [args.zone, args.face_model, args.object_model, args.group_config, args.assistive_model]:
         if not path.exists():
@@ -237,6 +243,8 @@ def main():
     from ultralytics import YOLO
 
     group_config = load_group_config(args.group_config)
+    crowd_counter = CrowdCounter(args.crowd_model, args.crowd_device)
+    crowd_counter.load()
     assistive_model = YOLO(str(args.assistive_model))
     areas, legacy_zone = load_areas(args.zone)
     zone, entry_only, guides = legacy_zone if legacy_zone else (None, False, [])
@@ -264,7 +272,8 @@ def main():
     assistive_boxes = []
     group_events = Counter()
     held_faces = []
-    frames = faces = objects = events = people = max_people = 0
+    frames = faces = objects = events = people = max_people = crowd_runs = crowd_people_total = 0
+    crowd_people = 0
     source_frame = 0
     next_sample_seconds = 0.0
     face_seconds = yolo_seconds = assistive_seconds = track_seconds = write_seconds = total_frame_seconds = 0.0
@@ -273,7 +282,7 @@ def main():
     with (args.out_dir / "frame_times.csv").open("w", newline="") as times_file, (args.out_dir / "events.csv").open("w", newline="") as events_file:
         time_rows = csv.writer(times_file)
         event_rows = csv.writer(events_file)
-        time_rows.writerow(["frame", "faces", "objects", "people", "assistive_objects", "events", "face_seconds", "yolo_seconds", "assistive_seconds", "track_seconds", "write_seconds", "total_seconds"])
+        time_rows.writerow(["frame", "faces", "objects", "people", "crowd_people", "assistive_objects", "events", "face_seconds", "yolo_seconds", "crowd_seconds", "assistive_seconds", "track_seconds", "write_seconds", "total_seconds"])
         event_rows.writerow(["frame", "track_id", "label", "person_group", "assistive_device", "score", "event", "level", "zone", "x1", "y1", "x2", "y2"])
         try:
             while ok and (args.max_frames is None or frames < args.max_frames):
@@ -290,6 +299,14 @@ def main():
                 else:
                     detections = list(yolo_detections(object_net, frame, args.object_size, args.object_conf, args.object_nms))
                 yolo_elapsed = time.perf_counter() - yolo_started
+
+                crowd_elapsed = 0.0
+                if frames % args.crowd_interval == 0:
+                    crowd_started = time.perf_counter()
+                    crowd_people = crowd_counter.count(frame)
+                    crowd_elapsed = time.perf_counter() - crowd_started
+                    crowd_runs += 1
+                    crowd_people_total += crowd_people
 
                 assistive_elapsed = 0.0
                 if frames % group_config["assistive_interval"] == 0:
@@ -372,7 +389,7 @@ def main():
                         draw_corner_alert(frame, "danger", frame_level_counts["danger"], incoming_level_counts["danger"], frame_group_counts["danger"])
                     elif frame_level_counts["warning"]:
                         draw_corner_alert(frame, "warning", frame_level_counts["warning"], incoming_level_counts["warning"], frame_group_counts["warning"])
-                cv2.putText(frame, f"PEOPLE {frame_people}", (30, frame.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+                cv2.putText(frame, f"PEOPLE {frame_people}  CROWD {crowd_people}", (30, frame.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
                 track_elapsed = time.perf_counter() - track_started
 
                 write_started = time.perf_counter()
@@ -380,7 +397,7 @@ def main():
                 write_elapsed = time.perf_counter() - write_started
                 total_elapsed = time.perf_counter() - frame_started
 
-                time_rows.writerow([frames, len(face_boxes), len(detections), frame_people, len(assistive_boxes), frame_events, f"{face_elapsed:.6f}", f"{yolo_elapsed:.6f}", f"{assistive_elapsed:.6f}", f"{track_elapsed:.6f}", f"{write_elapsed:.6f}", f"{total_elapsed:.6f}"])
+                time_rows.writerow([frames, len(face_boxes), len(detections), frame_people, crowd_people, len(assistive_boxes), frame_events, f"{face_elapsed:.6f}", f"{yolo_elapsed:.6f}", f"{crowd_elapsed:.6f}", f"{assistive_elapsed:.6f}", f"{track_elapsed:.6f}", f"{write_elapsed:.6f}", f"{total_elapsed:.6f}"])
                 frames += 1
                 source_frame += 1
                 faces += len(face_boxes)
@@ -417,6 +434,9 @@ def main():
         f"objects={objects}\n"
         f"average_people_per_frame={avg(people, frames):.2f}\n"
         f"max_people_per_frame={max_people}\n"
+        f"crowd_model={args.crowd_model}\n"
+        f"crowd_runs={crowd_runs}\n"
+        f"average_crowd_people={avg(crowd_people_total, crowd_runs):.2f}\n"
         f"events={events}\n"
         f"total_seconds={wall_seconds:.3f}\n"
         f"seconds_per_frame={avg(wall_seconds, frames):.6f}\n"

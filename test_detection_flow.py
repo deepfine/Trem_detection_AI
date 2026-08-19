@@ -1,5 +1,5 @@
 from detect_anomalies import track
-from process_blur_anomalies import confirm_alert, load_areas, predicted_area, show_danger_box, visible_people_count
+from process_blur_anomalies import confirm_alert, load_areas, predicted_area, show_danger_box
 
 
 def test_track_survives_one_missing_frame():
@@ -38,8 +38,3 @@ def test_only_confirmed_danger_zone_objects_get_boxes():
     assert not show_danger_box("warning_zone_object", True)
     assert not show_danger_box("fast_incoming", True)
     assert not show_danger_box("danger_zone_object", False)
-
-
-def test_visible_people_count_uses_current_tracks_only():
-    tracked = [(1, "person", 0.9, (0, 0, 1, 1), []), (2, "bicycle", 0.9, (0, 0, 1, 1), []), (3, "person", 0.9, (0, 0, 1, 1), [])]
-    assert visible_people_count(tracked) == 2

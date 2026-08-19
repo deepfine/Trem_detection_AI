@@ -1,0 +1,9 @@
+{
+  "cameras": [
+    {"id": "camera_1", "name": "1번 카메라", "url": "rtsp://user:password@192.168.0.101/stream"},
+    {"id": "camera_2", "name": "2번 카메라", "url": "rtsp://user:password@192.168.0.102/stream"},
+    {"id": "camera_3", "name": "3번 카메라", "url": "rtsp://user:password@192.168.0.103/stream"},
+    {"id": "camera_4", "name": "4번 카메라", "url": "rtsp://user:password@192.168.0.104/stream"},
+    {"id": "camera_5", "name": "5번 카메라", "url": "rtsp://user:password@192.168.0.105/stream"}
+  ]
+}

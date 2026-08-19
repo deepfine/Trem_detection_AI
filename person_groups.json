@@ -1,0 +1,22 @@
+{
+  "adult_height_reference": [
+    [200, 90],
+    [400, 160],
+    [600, 280],
+    [800, 390],
+    [1000, 500]
+  ],
+  "child_max_ratio": 0.55,
+  "child_min_aspect_ratio": 1.65,
+  "adult_min_ratio": 0.82,
+  "min_person_height_px": 80,
+  "assistive_classes": [
+    "wheelchair",
+    "crutches",
+    "walking cane",
+    "walker",
+    "baby stroller"
+  ],
+  "assistive_confidence": 0.25,
+  "assistive_interval": 5
+}

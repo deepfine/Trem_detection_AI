@@ -12,8 +12,6 @@ import onnxruntime as ort
 
 from anomaly_rules import OBSTACLE_CLASSES, average_delta, center, classify_event, direction_vector, point_in_polygon, sample_due
 from blur_tracking import iou, keep_recent_boxes
-from blur_video_scrfd_gpu import detect as detect_faces
-from blur_video_scrfd_gpu import make_detector as make_face_detector
 from blur_video_yunet import blur_boxes
 from detect_anomalies import COCO, load_zone, track, yolo_detections
 from person_groups import assistive_for_person, classify_person, load_group_config
@@ -187,6 +185,10 @@ def show_danger_box(event, active):
     return active and event == "danger_zone_object"
 
 
+def visible_people_count(tracked):
+    return sum(label == "person" for _, label, *_ in tracked)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Apply face blur and anomaly warnings in one pass.")
     parser.add_argument("--source", default="test_video.mkv")
@@ -219,6 +221,8 @@ def main():
     args = parser.parse_args()
 
     cv2.setNumThreads(1)
+    from blur_video_scrfd_gpu import detect as detect_faces
+    from blur_video_scrfd_gpu import make_detector as make_face_detector
 
     if "CUDAExecutionProvider" not in ort.get_available_providers():
         raise RuntimeError(f"CUDAExecutionProvider unavailable: {ort.get_available_providers()}")
@@ -260,7 +264,7 @@ def main():
     assistive_boxes = []
     group_events = Counter()
     held_faces = []
-    frames = faces = objects = events = 0
+    frames = faces = objects = events = people = max_people = 0
     source_frame = 0
     next_sample_seconds = 0.0
     face_seconds = yolo_seconds = assistive_seconds = track_seconds = write_seconds = total_frame_seconds = 0.0
@@ -269,7 +273,7 @@ def main():
     with (args.out_dir / "frame_times.csv").open("w", newline="") as times_file, (args.out_dir / "events.csv").open("w", newline="") as events_file:
         time_rows = csv.writer(times_file)
         event_rows = csv.writer(events_file)
-        time_rows.writerow(["frame", "faces", "objects", "assistive_objects", "events", "face_seconds", "yolo_seconds", "assistive_seconds", "track_seconds", "write_seconds", "total_seconds"])
+        time_rows.writerow(["frame", "faces", "objects", "people", "assistive_objects", "events", "face_seconds", "yolo_seconds", "assistive_seconds", "track_seconds", "write_seconds", "total_seconds"])
         event_rows.writerow(["frame", "track_id", "label", "person_group", "assistive_device", "score", "event", "level", "zone", "x1", "y1", "x2", "y2"])
         try:
             while ok and (args.max_frames is None or frames < args.max_frames):
@@ -319,7 +323,9 @@ def main():
                 frame_level_counts = {"danger": 0, "warning": 0}
                 incoming_level_counts = {"danger": 0, "warning": 0}
                 frame_group_counts = {level: Counter() for level in frame_level_counts}
-                for tid, label, score, box, points in track(detections, tracks, args.object_size / 2, args.history, args.track_max_missed):
+                tracked = list(track(detections, tracks, args.object_size / 2, args.history, args.track_max_missed))
+                frame_people = visible_people_count(tracked)
+                for tid, label, score, box, points in tracked:
                     person_group = assistive_device = ""
                     if label == "person":
                         assistive_device = assistive_for_person(box, assistive_boxes)
@@ -366,6 +372,7 @@ def main():
                         draw_corner_alert(frame, "danger", frame_level_counts["danger"], incoming_level_counts["danger"], frame_group_counts["danger"])
                     elif frame_level_counts["warning"]:
                         draw_corner_alert(frame, "warning", frame_level_counts["warning"], incoming_level_counts["warning"], frame_group_counts["warning"])
+                cv2.putText(frame, f"PEOPLE {frame_people}", (30, frame.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
                 track_elapsed = time.perf_counter() - track_started
 
                 write_started = time.perf_counter()
@@ -373,11 +380,13 @@ def main():
                 write_elapsed = time.perf_counter() - write_started
                 total_elapsed = time.perf_counter() - frame_started
 
-                time_rows.writerow([frames, len(face_boxes), len(detections), len(assistive_boxes), frame_events, f"{face_elapsed:.6f}", f"{yolo_elapsed:.6f}", f"{assistive_elapsed:.6f}", f"{track_elapsed:.6f}", f"{write_elapsed:.6f}", f"{total_elapsed:.6f}"])
+                time_rows.writerow([frames, len(face_boxes), len(detections), frame_people, len(assistive_boxes), frame_events, f"{face_elapsed:.6f}", f"{yolo_elapsed:.6f}", f"{assistive_elapsed:.6f}", f"{track_elapsed:.6f}", f"{write_elapsed:.6f}", f"{total_elapsed:.6f}"])
                 frames += 1
                 source_frame += 1
                 faces += len(face_boxes)
                 objects += len(detections)
+                people += frame_people
+                max_people = max(max_people, frame_people)
                 events += frame_events
                 face_seconds += face_elapsed
                 yolo_seconds += yolo_elapsed
@@ -406,6 +415,8 @@ def main():
         f"frames={frames}\n"
         f"faces={faces}\n"
         f"objects={objects}\n"
+        f"average_people_per_frame={avg(people, frames):.2f}\n"
+        f"max_people_per_frame={max_people}\n"
         f"events={events}\n"
         f"total_seconds={wall_seconds:.3f}\n"
         f"seconds_per_frame={avg(wall_seconds, frames):.6f}\n"

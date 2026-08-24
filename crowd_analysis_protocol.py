@@ -89,20 +89,51 @@ def parse_analysis_body(payload, analyzed_dir: Path, allowed_roots: list[Path]) 
     )
 
 
-def completed_payload(job: AnalysisJob, counted_people: int, inference_ms: float) -> dict:
+def completed_payload(
+    job: AnalysisJob,
+    counted_people: int,
+    inference_ms: float,
+    objects=None,
+    crowd_ms: float | None = None,
+    object_ms: float | None = None,
+    faces=None,
+    face_ms: float | None = None,
+) -> dict:
+    detected = list(objects or [])
+    detected_faces = list(faces or [])
+    methods = ["dm_count"]
+    if object_ms is not None:
+        methods.append("yolov8n")
+    if face_ms is not None:
+        methods.append("scrfd")
+    raw = {
+        "countedPeople": counted_people,
+        "detectedObjectCount": len(detected),
+        "objects": detected,
+        "detectedFaceCount": len(detected_faces),
+        "faces": detected_faces,
+        "method": "+".join(methods),
+        "inference_ms": round(inference_ms, 2),
+        "frame_path": job.relative_path,
+        "frame_abs_path": str(job.absolute_path),
+        "congestionSensorDeviceId": job.congestion_sensor_device_id,
+        "camera": job.camera,
+    }
+    if crowd_ms is not None:
+        raw["crowd_ms"] = round(crowd_ms, 2)
+    if object_ms is not None:
+        raw["object_ms"] = round(object_ms, 2)
+    if face_ms is not None:
+        raw["face_ms"] = round(face_ms, 2)
     return {
         "id": job.id,
         "status": "COMPLETED",
         "countedPeople": counted_people,
-        "raw": {
-            "countedPeople": counted_people,
-            "method": "dm_count",
-            "inference_ms": round(inference_ms, 2),
-            "frame_path": job.relative_path,
-            "frame_abs_path": str(job.absolute_path),
-            "congestionSensorDeviceId": job.congestion_sensor_device_id,
-            "camera": job.camera,
-        },
+        "detectedObjectCount": len(detected),
+        "objects": detected,
+        "detectedFaceCount": len(detected_faces),
+        "faces": detected_faces,
+        "raw": raw,
     }
 
 

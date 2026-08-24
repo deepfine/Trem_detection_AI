@@ -1,4 +1,4 @@
-from object_analysis_server import objects_in_zone, zone_polygon
+from frame_objects import objects_in_zone, zone_polygon
 
 
 def test_zone_scales_1280x720_coordinates_and_fixes_reversed_line():

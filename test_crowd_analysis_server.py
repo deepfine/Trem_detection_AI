@@ -7,6 +7,7 @@ from threading import Thread
 import cv2
 import numpy as np
 
+from camera_zones import save_zone_file
 from crowd_analysis_protocol import completed_payload, failed_payload, parse_analysis_body
 from crowd_analysis_server import AnalysisRuntime, make_handler
 
@@ -18,6 +19,24 @@ class FakeCounter:
     def count(self, frame):
         assert frame is not None
         return 12
+
+
+class FakeObjectDetector:
+    def load(self):
+        return None
+
+    def detect(self, frame, zone=None, target_classes=()):
+        assert frame is not None
+        return [{"class": "person", "confidence": 0.91, "bbox": [1, 2, 3, 4]}], 8.5
+
+
+class FakeFaceDetector:
+    def load(self):
+        return None
+
+    def detect(self, frame):
+        assert frame is not None
+        return [{"confidence": 0.94, "bbox": [5, 6, 15, 18]}]
 
 
 def write_jpeg(path: Path):
@@ -76,7 +95,42 @@ def test_completed_payload_matches_api_contract():
     assert payload["id"] == 41
     assert payload["status"] == "COMPLETED"
     assert payload["countedPeople"] == 12
+    assert payload["detectedObjectCount"] == 0
+    assert payload["objects"] == []
+    assert payload["detectedFaceCount"] == 0
+    assert payload["faces"] == []
     assert payload["raw"]["method"] == "dm_count"
+
+
+def test_completed_payload_includes_objects():
+    job = parse_analysis_body(
+        {"id": 41, "congestionSensorDeviceId": 1, "frame_path": "a.jpg", "analyzedAbsolutePath": "/upload/a.jpg"},
+        Path("/upload"),
+        [Path("/upload")],
+    )
+    objects = [{"class": "person", "confidence": 0.9123, "bbox": [120, 80, 260, 430]}]
+    payload = completed_payload(job, 12, 52.4, objects=objects, crowd_ms=40.29, object_ms=12.11)
+    assert payload["detectedObjectCount"] == 1
+    assert payload["objects"] == objects
+    assert payload["raw"]["objects"] == objects
+    assert payload["raw"]["method"] == "dm_count+yolov8n"
+    assert payload["raw"]["crowd_ms"] == 40.29
+    assert payload["raw"]["object_ms"] == 12.11
+
+
+def test_completed_payload_includes_face_coordinates():
+    job = parse_analysis_body(
+        {"id": 41, "congestionSensorDeviceId": 1, "frame_path": "a.jpg", "analyzedAbsolutePath": "/upload/a.jpg"},
+        Path("/upload"),
+        [Path("/upload")],
+    )
+    faces = [{"confidence": 0.94, "bbox": [120, 80, 260, 230]}]
+    payload = completed_payload(job, 12, 46.2, faces=faces, crowd_ms=40.29, face_ms=5.91)
+    assert payload["detectedFaceCount"] == 1
+    assert payload["faces"] == faces
+    assert payload["raw"]["faces"] == faces
+    assert payload["raw"]["method"] == "dm_count+scrfd"
+    assert payload["raw"]["face_ms"] == 5.91
 
 
 def test_failed_payload_keeps_request_id():
@@ -122,6 +176,105 @@ def test_http_accepts_analysis_and_posts_result(tmp_path):
         runtime.jobs.join()
         assert posted[0]["id"] == 41
         assert posted[0]["countedPeople"] == 12
+        assert posted[0]["detectedObjectCount"] == 0
+        assert posted[0]["objects"] == []
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_http_includes_object_detections(tmp_path):
+    frame = tmp_path / "27_1" / "a.jpg"
+    write_jpeg(frame)
+    posted = []
+    zones = tmp_path / "zones"
+    save_zone_file(
+        zones / "1.json",
+        {"width": 32, "height": 32, "polygons": [[[0, 0], [31, 0], [31, 31], [0, 31]]]},
+    )
+    runtime = AnalysisRuntime(
+        FakeCounter(),
+        tmp_path,
+        [tmp_path],
+        "",
+        "",
+        result_sink=posted.append,
+        object_detector=FakeObjectDetector(),
+        zone_dir=zones,
+    )
+    runtime.start()
+    runtime.enqueue(
+        parse_analysis_body(
+            {
+                "id": 41,
+                "congestionSensorDeviceId": 1,
+                "frame_path": "27_1/a.jpg",
+                "frame_abs_path": str(frame),
+            },
+            tmp_path,
+            [tmp_path],
+        )
+    )
+    runtime.jobs.join()
+    assert posted[0]["detectedObjectCount"] == 1
+    assert posted[0]["objects"][0]["class"] == "person"
+    assert posted[0]["raw"]["object_ms"] == 8.5
+
+
+def test_http_includes_face_coordinates(tmp_path):
+    frame = tmp_path / "27_1" / "a.jpg"
+    write_jpeg(frame)
+    posted = []
+    runtime = AnalysisRuntime(
+        FakeCounter(),
+        tmp_path,
+        [tmp_path],
+        "",
+        "",
+        result_sink=posted.append,
+        face_detector=FakeFaceDetector(),
+    )
+    runtime.start()
+    runtime.enqueue(
+        parse_analysis_body(
+            {"id": 41, "frame_abs_path": str(frame)},
+            tmp_path,
+            [tmp_path],
+        )
+    )
+    runtime.jobs.join()
+    assert posted[0]["detectedFaceCount"] == 1
+    assert posted[0]["faces"] == [{"confidence": 0.94, "bbox": [5, 6, 15, 18]}]
+    assert posted[0]["raw"]["face_ms"] >= 0
+
+
+def test_http_skips_objects_when_zone_file_missing(tmp_path):
+    frame = tmp_path / "27_1" / "a.jpg"
+    write_jpeg(frame)
+    posted = []
+    runtime = AnalysisRuntime(
+        FakeCounter(),
+        tmp_path,
+        [tmp_path],
+        "",
+        "",
+        result_sink=posted.append,
+        object_detector=FakeObjectDetector(),
+        zone_dir=tmp_path / "zones",
+    )
+    runtime.start()
+    runtime.enqueue(
+        parse_analysis_body(
+            {
+                "id": 41,
+                "congestionSensorDeviceId": 1,
+                "frame_path": "27_1/a.jpg",
+                "frame_abs_path": str(frame),
+            },
+            tmp_path,
+            [tmp_path],
+        )
+    )
+    runtime.jobs.join()
+    assert posted[0]["detectedObjectCount"] == 0
+    assert posted[0]["objects"] == []

@@ -10,48 +10,10 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 
-from anomaly_rules import point_in_polygon
 from crowd_analysis_protocol import AnalysisJob, completed_object_payload, failed_payload
 from crowd_analysis_server import env_path, env_str, make_handler, post_result_with_retry
 from detect_anomalies import COCO
-
-
-DEFAULT_TARGET_CLASSES = {
-    "person", "bicycle", "motorcycle", "car", "bus", "truck", "backpack", "suitcase",
-}
-
-
-def zone_polygon(zone: dict | None, frame_width: int, frame_height: int):
-    if not zone:
-        raise ValueError("missing zone JSON")
-    width, height, lines = zone.get("width"), zone.get("height"), zone.get("lines")
-    if not isinstance(width, (int, float)) or width <= 0 or not isinstance(height, (int, float)) or height <= 0:
-        raise ValueError("zone width and height must be positive numbers")
-    if not isinstance(lines, list) or len(lines) != 2 or any(not isinstance(line, list) or len(line) != 2 for line in lines):
-        raise ValueError("zone lines must contain exactly two lines with two points each")
-    try:
-        a, b = [[[float(x), float(y)] for x, y in line] for line in lines]
-    except (TypeError, ValueError):
-        raise ValueError("each zone point must be [x, y]") from None
-    same = sum((a[i][0] - b[i][0]) ** 2 + (a[i][1] - b[i][1]) ** 2 for i in range(2))
-    crossed = sum((a[i][0] - b[1 - i][0]) ** 2 + (a[i][1] - b[1 - i][1]) ** 2 for i in range(2))
-    if crossed < same:
-        b.reverse()
-    scale_x, scale_y = frame_width / width, frame_height / height
-    return [(x * scale_x, y * scale_y) for x, y in (a[0], a[1], b[1], b[0])]
-
-
-def objects_in_zone(detections, polygon, target_classes):
-    objects = []
-    for label, confidence, (x1, y1, x2, y2) in detections:
-        if label not in target_classes or not point_in_polygon(((x1 + x2) / 2, y2), polygon):
-            continue
-        objects.append({
-            "class": label,
-            "confidence": round(confidence, 4),
-            "bbox": [x1, y1, x2, y2],
-        })
-    return objects
+from frame_objects import DEFAULT_TARGET_CLASSES, objects_in_polygons, zone_polygons
 
 
 class ObjectDetector:
@@ -99,7 +61,10 @@ class ObjectDetector:
         for index in np.array(keep).reshape(-1) if len(keep) else []:
             x, y, w, h = boxes[index]
             detections.append((COCO[class_ids[index]], scores[index], (x, y, x + w, y + h)))
-        return objects_in_zone(detections, zone_polygon(zone, width, height), set(target_classes) or DEFAULT_TARGET_CLASSES)
+        polygons = zone_polygons(zone, width, height)
+        if not polygons:
+            raise ValueError("missing zone JSON")
+        return objects_in_polygons(detections, polygons, set(target_classes) or DEFAULT_TARGET_CLASSES)
 
 
 class ObjectAnalysisRuntime:

@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-import cv2
+from camera_zones import (
+    latest_jpeg,
+    list_cameras,
+    load_zone_file,
+    save_zone_file,
+    zone_file,
+)
 
 
 HTML = r"""<!doctype html>
@@ -15,12 +21,12 @@ HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CCTV 구역 설정</title>
+<title>위험구역 설정</title>
 <style>
 * { box-sizing: border-box; }
 body { margin: 0; font-family: system-ui, sans-serif; background: #101216; color: #eee; }
 .bar { min-height: 58px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; background: #1b1f26; }
-button, select, input { height: 36px; border: 1px solid #505762; background: #252b34; color: #eee; border-radius: 6px; padding: 0 10px; }
+button, select { height: 36px; border: 1px solid #505762; background: #252b34; color: #eee; border-radius: 6px; padding: 0 10px; }
 button:hover { background: #323945; }
 #status { margin-left: auto; color: #bbc2cc; font-size: 14px; }
 .wrap { height: calc(100vh - 58px); display: grid; place-items: center; overflow: auto; padding: 12px; }
@@ -30,12 +36,6 @@ canvas { max-width: 100%; max-height: calc(100vh - 82px); background: #000; curs
 <body>
 <div class="bar">
   <select id="camera" aria-label="카메라"></select>
-  <select id="level" aria-label="구역 등급">
-    <option value="danger">위험</option>
-    <option value="warning">경고</option>
-    <option value="safe">안전</option>
-  </select>
-  <input id="name" value="zone_1" aria-label="구역 이름">
   <button id="add">구역 추가</button>
   <button id="undo">점 취소</button>
   <button id="remove">마지막 구역 삭제</button>
@@ -48,31 +48,24 @@ canvas { max-width: 100%; max-height: calc(100vh - 82px); background: #000; curs
 const camera = document.getElementById("camera");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const level = document.getElementById("level");
-const nameInput = document.getElementById("name");
 const status = document.getElementById("status");
-const colors = {danger: "#ff3030", warning: "#ffd21f", safe: "#30c060"};
 const img = new Image();
 let points = [];
-let zones = [];
+let polygons = [];
 
 function draw() {
   if (img.complete && img.naturalWidth) ctx.drawImage(img, 0, 0);
   ctx.lineWidth = 3;
-  ctx.font = "18px system-ui";
-  for (const zone of zones) {
-    if (!zone.points.length) continue;
-    ctx.beginPath(); ctx.moveTo(...zone.points[0]);
-    zone.points.slice(1).forEach(p => ctx.lineTo(...p));
+  ctx.strokeStyle = "#ff3030";
+  ctx.fillStyle = "#ff303055";
+  for (const polygon of polygons) {
+    if (polygon.length < 2) continue;
+    ctx.beginPath(); ctx.moveTo(...polygon[0]);
+    polygon.slice(1).forEach(p => ctx.lineTo(...p));
     ctx.closePath();
-    ctx.fillStyle = colors[zone.level] + "55";
-    ctx.strokeStyle = colors[zone.level];
     ctx.fill(); ctx.stroke();
-    ctx.fillStyle = colors[zone.level];
-    ctx.fillText(`${zone.name} (${zone.level})`, zone.points[0][0], Math.max(20, zone.points[0][1] - 8));
   }
-  ctx.strokeStyle = colors[level.value];
-  ctx.fillStyle = colors[level.value];
+  ctx.fillStyle = "#ff3030";
   for (const [i, p] of points.entries()) {
     ctx.beginPath(); ctx.arc(p[0], p[1], 6, 0, Math.PI * 2); ctx.fill();
     if (i) { ctx.beginPath(); ctx.moveTo(...points[i - 1]); ctx.lineTo(...p); ctx.stroke(); }
@@ -83,17 +76,18 @@ async function selectCamera() {
   points = [];
   status.textContent = "불러오는 중...";
   const res = await fetch(`/zones/${encodeURIComponent(camera.value)}`);
-  zones = res.ok ? (await res.json()).zones : [];
+  const data = res.ok ? await res.json() : {polygons: []};
+  polygons = data.polygons || [];
   img.src = `/frame/${encodeURIComponent(camera.value)}.jpg?t=${Date.now()}`;
 }
 
 img.onload = () => {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
-  status.textContent = "화면을 클릭해 구역 꼭짓점을 지정하세요.";
+  status.textContent = "화면을 클릭해 위험구역 꼭짓점을 지정하세요.";
   draw();
 };
-img.onerror = () => status.textContent = "카메라 화면을 불러오지 못했습니다.";
+img.onerror = () => status.textContent = "분석 JPEG를 불러오지 못했습니다. 카메라 프레임이 쌓인 뒤 다시 시도하세요.";
 canvas.onclick = event => {
   const rect = canvas.getBoundingClientRect();
   points.push([
@@ -103,33 +97,32 @@ canvas.onclick = event => {
   draw();
 };
 camera.onchange = selectCamera;
-level.onchange = draw;
 document.getElementById("add").onclick = () => {
   if (points.length < 3) { status.textContent = "구역은 점 3개 이상이 필요합니다."; return; }
-  zones.push({name: nameInput.value.trim() || `zone_${zones.length + 1}`, level: level.value, points});
+  polygons.push(points);
   points = [];
-  nameInput.value = `zone_${zones.length + 1}`;
   draw();
 };
 document.getElementById("undo").onclick = () => { points.pop(); draw(); };
-document.getElementById("remove").onclick = () => { zones.pop(); draw(); };
-document.getElementById("refresh").onclick = async () => {
-  status.textContent = "카메라 화면 갱신 중...";
-  const res = await fetch(`/refresh/${encodeURIComponent(camera.value)}`, {method: "POST"});
-  if (!res.ok) { status.textContent = await res.text(); return; }
+document.getElementById("remove").onclick = () => { polygons.pop(); draw(); };
+document.getElementById("refresh").onclick = () => {
   img.src = `/frame/${encodeURIComponent(camera.value)}.jpg?t=${Date.now()}`;
 };
 document.getElementById("save").onclick = async () => {
   if (points.length) { status.textContent = "그리는 중인 구역을 먼저 추가하거나 취소하세요."; return; }
+  if (!img.naturalWidth) { status.textContent = "화면이 없어 저장할 수 없습니다."; return; }
   const res = await fetch(`/zones/${encodeURIComponent(camera.value)}`, {
-    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({zones}),
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({width: canvas.width, height: canvas.height, polygons}),
   });
   status.textContent = await res.text();
 };
 
 fetch("/cameras").then(r => r.json()).then(items => {
-  for (const item of items) camera.add(new Option(item.name, item.id));
+  for (const item of items) camera.add(new Option(`${item.name} (${item.id})`, String(item.id)));
   if (items.length) selectCamera();
+  else status.textContent = "분석된 카메라 폴더가 없습니다.";
 });
 </script>
 </body>
@@ -137,65 +130,9 @@ fetch("/cameras").then(r => r.json()).then(items => {
 """
 
 
-def load_cameras(path: Path):
-    data = json.loads(path.read_text())
-    cameras = data.get("cameras") if isinstance(data, dict) else None
-    if not isinstance(cameras, list) or not 1 <= len(cameras) <= 5:
-        raise ValueError("cameras must contain 1 to 5 items")
-    ids = set()
-    for camera in cameras:
-        if not isinstance(camera, dict) or not all(camera.get(key) for key in ("id", "name", "url")):
-            raise ValueError("each camera needs id, name, and url")
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", camera["id"]) or camera["id"] in ids:
-            raise ValueError(f"invalid or duplicate camera id: {camera['id']}")
-        ids.add(camera["id"])
-    return cameras
-
-
-def validate_zones(payload):
-    zones = payload.get("zones") if isinstance(payload, dict) else None
-    if not isinstance(zones, list):
-        raise ValueError("zones must be a list")
-    for zone in zones:
-        if not isinstance(zone, dict) or zone.get("level") not in {"danger", "warning", "safe"}:
-            raise ValueError("zone level must be danger, warning, or safe")
-        if not isinstance(zone.get("name"), str) or not zone["name"].strip():
-            raise ValueError("zone name is required")
-        points = zone.get("points")
-        if not isinstance(points, list) or len(points) < 3 or any(
-            not isinstance(point, list) or len(point) != 2 or not all(isinstance(value, int) for value in point)
-            for point in points
-        ):
-            raise ValueError("zone needs at least 3 integer [x, y] points")
-    return {"zones": zones}
-
-
-def extract_frame(source: str, output: Path):
-    cap = cv2.VideoCapture(source)
-    if not cap.isOpened():
-        raise RuntimeError("카메라에 연결할 수 없습니다.")
-    ok, frame = cap.read()
-    cap.release()
-    if not ok:
-        raise RuntimeError("카메라 프레임을 읽을 수 없습니다.")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(output), frame):
-        raise RuntimeError("카메라 프레임을 저장할 수 없습니다.")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Configure danger, warning, and safe zones for up to five CCTV cameras.")
-    parser.add_argument("--cameras", type=Path, required=True, help="camera JSON file")
-    parser.add_argument("--out-dir", type=Path, default=Path("result/camera_zones"))
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    args = parser.parse_args()
-
-    cameras = load_cameras(args.cameras)
-    by_id = {camera["id"]: camera for camera in cameras}
-    frames_dir = args.out_dir / "frames"
-    zones_dir = args.out_dir / "zones"
-    frames_dir.mkdir(parents=True, exist_ok=True)
+def make_handler(analyzed_dir: Path, zones_dir: Path):
+    analyzed_dir = analyzed_dir.resolve()
+    zones_dir = zones_dir.resolve()
     zones_dir.mkdir(parents=True, exist_ok=True)
 
     class Handler(BaseHTTPRequestHandler):
@@ -212,8 +149,8 @@ def main():
             if not path.startswith(prefix) or suffix and not path.endswith(suffix):
                 return None
             end = -len(suffix) if suffix else None
-            camera_id = path[len(prefix):end]
-            return camera_id if camera_id in by_id else None
+            raw = path[len(prefix) : end]
+            return int(raw) if raw.isdigit() else None
 
         def do_GET(self):
             path = urlparse(self.path).path
@@ -221,60 +158,96 @@ def main():
                 self.send(200, HTML, "text/html; charset=utf-8")
                 return
             if path == "/cameras":
-                self.send(200, json.dumps([{"id": c["id"], "name": c["name"]} for c in cameras], ensure_ascii=False), "application/json")
+                self.send(
+                    200,
+                    json.dumps(list_cameras(analyzed_dir, zones_dir), ensure_ascii=False),
+                    "application/json",
+                )
                 return
-            camera_id = self.camera_id("/frame/", ".jpg")
-            if camera_id:
-                frame = frames_dir / f"{camera_id}.jpg"
-                if not frame.exists():
-                    try:
-                        extract_frame(by_id[camera_id]["url"], frame)
-                    except RuntimeError as error:
-                        self.send(502, str(error))
-                        return
+            device_id = self.camera_id("/frame/", ".jpg")
+            if device_id is not None:
+                frame = latest_jpeg(analyzed_dir, device_id)
+                if frame is None or not frame.is_file():
+                    self.send(404, "분석 JPEG가 없습니다.")
+                    return
                 self.send(200, frame.read_bytes(), "image/jpeg")
                 return
-            camera_id = self.camera_id("/zones/")
-            if camera_id:
-                zone_file = zones_dir / f"{camera_id}.json"
-                self.send(200, zone_file.read_text() if zone_file.exists() else '{"zones": []}', "application/json")
+            device_id = self.camera_id("/zones/")
+            if device_id is not None:
+                payload = load_zone_file(zone_file(zones_dir, device_id)) or {
+                    "width": 0,
+                    "height": 0,
+                    "polygons": [],
+                }
+                self.send(200, json.dumps(payload, ensure_ascii=False), "application/json")
                 return
             self.send_error(404)
 
         def do_POST(self):
-            camera_id = self.camera_id("/refresh/")
-            if camera_id:
-                try:
-                    extract_frame(by_id[camera_id]["url"], frames_dir / f"{camera_id}.jpg")
-                except RuntimeError as error:
-                    self.send(502, str(error))
-                    return
-                self.send(200, "화면을 갱신했습니다.")
-                return
-            camera_id = self.camera_id("/zones/")
-            if not camera_id:
+            device_id = self.camera_id("/zones/")
+            if device_id is None:
                 self.send_error(404)
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if length > 1_000_000:
                     raise ValueError("request is too large")
-                payload = validate_zones(json.loads(self.rfile.read(length)))
-            except (ValueError, json.JSONDecodeError) as error:
+                payload = json.loads(self.rfile.read(length))
+                frame = latest_jpeg(analyzed_dir, device_id)
+                image_w = image_h = None
+                if frame is not None:
+                    import cv2
+
+                    image = cv2.imread(str(frame))
+                    if image is not None:
+                        image_h, image_w = image.shape[:2]
+                saved = save_zone_file(
+                    zone_file(zones_dir, device_id),
+                    {
+                        **payload,
+                        "width": payload.get("width") or image_w,
+                        "height": payload.get("height") or image_h,
+                    },
+                )
+            except (ValueError, json.JSONDecodeError, TypeError) as error:
                 self.send(400, str(error))
                 return
-            output = zones_dir / f"{camera_id}.json"
-            output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
-            self.send(200, f"{by_id[camera_id]['name']} 구역을 저장했습니다.")
+            self.send(200, f"카메라 {device_id} 위험구역 {len(saved['polygons'])}개를 저장했습니다.")
 
         def log_message(self, format, *args):
-            pass
+            print(f"zone editor {self.address_string()} {format % args}", flush=True)
 
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"url=http://{args.host}:{args.port}")
-    print(f"cameras={len(cameras)}")
-    print(f"zones={zones_dir}")
+    return Handler
+
+
+def serve_annotator(analyzed_dir: Path, zones_dir: Path, host="0.0.0.0", port=8765):
+    server = ThreadingHTTPServer((host, port), make_handler(analyzed_dir, zones_dir))
+    print(f"zone editor http://{host}:{port}", flush=True)
+    print(f"zones={zones_dir}", flush=True)
     server.serve_forever()
+
+
+def start_annotator_thread(analyzed_dir: Path, zones_dir: Path, host="0.0.0.0", port=8765):
+    try:
+        server = ThreadingHTTPServer((host, port), make_handler(analyzed_dir, zones_dir))
+    except OSError as error:
+        print(f"zone editor failed to bind {host}:{port} reason={error}", flush=True)
+        return None
+    print(f"zone editor http://{host}:{port}", flush=True)
+    print(f"zones={zones_dir}", flush=True)
+    thread = threading.Thread(target=server.serve_forever, name="zone-annotator", daemon=True)
+    thread.start()
+    return thread
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Click polygons on the latest analyzed JPEG to mark a danger zone.")
+    parser.add_argument("--analyzed-dir", type=Path, default=Path("/upload/visit_servant/analyzed"))
+    parser.add_argument("--zones-dir", type=Path, default=Path("/upload/visit_servant/zones"))
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8765)
+    args = parser.parse_args()
+    serve_annotator(args.analyzed_dir, args.zones_dir, args.host, args.port)
 
 
 if __name__ == "__main__":

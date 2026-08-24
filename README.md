@@ -149,12 +149,19 @@ docker run --rm --gpus all \
     {"class": "person", "confidence": 0.9123, "bbox": [120, 80, 260, 430]},
     {"class": "bicycle", "confidence": 0.84, "bbox": [310, 210, 510, 460]}
   ],
+  "detectedFaceCount": 1,
+  "faces": [
+    {"confidence": 0.94, "bbox": [120, 80, 260, 230]}
+  ],
   "raw": {
-    "method": "yolov8n_roi",
-    "inference_ms": 14.2
+    "method": "dm_count+yolov8n+scrfd",
+    "inference_ms": 54.4,
+    "face_ms": 5.9
   }
 }
 ```
+
+`faces[].bbox`는 원본 이미지 기준 `[x1, y1, x2, y2]` 좌표이다. AI 서버는 얼굴 영역을 수정하지 않으며, 백엔드는 이 좌표를 사용하여 모자이크 또는 블러 처리를 수행한다.
 
 ## Visit Servant 연동
 
@@ -202,14 +209,17 @@ python process_blur_anomalies.py \
 
 ## 카메라별 구역 설정
 
-백엔드가 제공하는 중계 URL을 `cameras.json`에 기재한 뒤 웹 편집기를 실행한다.
+`crowd_analysis_server.py`가 기동되면 구역 편집기도 함께 열린다. 브라우저에서 `http://localhost:8765`에 접속해 카메라 최신 분석 JPEG 위에 점을 찍어 위험구역 다각형을 저장한다.
+
+파일은 `/upload/visit_servant/zones/{장비ID}.json`이다. 분석 요청마다 `congestionSensorDeviceId`로 이 파일을 다시 읽어, 다각형 안의 객체만 결과에 남긴다.
 
 ```bash
-cp cameras.example.json cameras.json
-python zone_annotator.py --cameras cameras.json --host 0.0.0.0 --port 8765
+python zone_annotator.py \
+  --analyzed-dir /upload/visit_servant/analyzed \
+  --zones-dir /upload/visit_servant/zones \
+  --host 0.0.0.0 \
+  --port 8765
 ```
-
-브라우저에서 `http://localhost:8765`에 접속하면 카메라별 최신 프레임에 안전·경고·위험 구역을 지정할 수 있다. 결과는 `result/camera_zones/zones/<camera_id>.json`에 저장된다.
 
 ## 테스트
 
@@ -227,6 +237,6 @@ pytest -q
 | `crowd_counter.py` | DM-Count 추론 및 영상 단독 평가 |
 | `process_blur_anomalies.py` | 얼굴 블러·객체 탐지·위험 판정·군중 계수 통합 처리 |
 | `anomaly_rules.py` | 구역 진입 및 접근 위험 규칙 |
-| `zone_annotator.py` | 카메라별 웹 구역 편집기 |
-| `zones.example.json` | 안전·경고·위험 구역 예시 |
-| `cameras.example.json` | 중계 카메라 설정 예시 |
+| `zone_annotator.py` | 카메라별 위험구역 웹 편집기 |
+| `camera_zones.py` | 장비 ID ↔ 구역 JSON 매칭 |
+| `zones.example.json` | 다각형 구역 예시 |

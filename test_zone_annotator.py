@@ -9,7 +9,9 @@ from zone_annotator import make_handler
 
 def test_validates_polygon_payload():
     payload = {"width": 100, "height": 80, "polygons": [[[0, 0], [10, 0], [10, 10]]]}
-    assert validate_zone_payload(payload) == payload
+    validated = validate_zone_payload(payload)
+    assert validated["zones"][0]["level"] == "danger"
+    assert validated["zones"][0]["points"] == payload["polygons"][0]
     try:
         validate_zone_payload({"width": 1, "height": 1, "polygons": [[[0, 0], [1, 0]]]})
     except ValueError as error:
@@ -33,13 +35,20 @@ def test_editor_lists_cameras_and_saves_device_json(tmp_path):
         conn.request("GET", "/cameras")
         cameras = json.loads(conn.getresponse().read())
         assert cameras == [{"id": 4, "name": "33"}]
-        body = json.dumps({"width": 32, "height": 24, "polygons": [[[1, 1], [8, 1], [8, 8]]]}).encode()
+        body = json.dumps({
+            "width": 32,
+            "height": 24,
+            "zoneGapThreshold": 3,
+            "zones": [{"name": "track-z8", "level": "danger", "index": 8, "points": [[1, 1], [8, 1], [8, 8]]}],
+        }).encode()
         conn.request("POST", "/zones/4", body=body, headers={"Content-Type": "application/json"})
         response = conn.getresponse()
         assert response.status == 200
         response.read()
         saved = json.loads(zone_file(zones, 4).read_text())
-        assert saved["polygons"][0][2] == [8, 8]
+        assert saved["zones"][0]["index"] == 8
+        assert saved["zones"][0]["points"][2] == [8, 8]
+        assert saved["zoneGapThreshold"] == 3
     finally:
         server.shutdown()
         server.server_close()

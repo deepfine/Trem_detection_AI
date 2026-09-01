@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 
 
+ZONE_LEVELS = {"danger", "warning", "safe"}
+
+
 def zone_file(zones_dir: Path, device_id: int) -> Path:
     return zones_dir / f"{int(device_id)}.json"
 
@@ -72,26 +75,38 @@ def _as_polygon(value) -> list[list[int]] | None:
     return points
 
 
-def polygons_from_payload(payload: dict | None) -> list[list[list[int]]]:
+def zones_from_payload(payload: dict | None) -> list[dict]:
     if not isinstance(payload, dict):
         return []
-    if isinstance(payload.get("polygons"), list):
-        polygons = [_as_polygon(item) for item in payload["polygons"]]
-        return [item for item in polygons if item is not None]
-    single = _as_polygon(payload.get("points"))
-    if single is not None:
-        return [single]
     zones = payload.get("zones")
     if isinstance(zones, list):
-        polygons = []
-        for zone in zones:
+        parsed = []
+        for number, zone in enumerate(zones, 1):
             if not isinstance(zone, dict):
                 continue
-            polygon = _as_polygon(zone.get("points") or zone.get("mask"))
-            if polygon is not None:
-                polygons.append(polygon)
-        return polygons
-    return []
+            points = _as_polygon(zone.get("points") or zone.get("mask"))
+            level = zone.get("level")
+            if points is None or level not in ZONE_LEVELS:
+                continue
+            item = {"name": str(zone.get("name") or f"{level}-{number}"), "level": level, "points": points}
+            index = zone.get("index", zone.get("zoneIndex"))
+            if isinstance(index, int) and not isinstance(index, bool) and index >= 0:
+                item["index"] = index
+            parsed.append(item)
+        return parsed
+    polygons = payload.get("polygons")
+    if isinstance(polygons, list):
+        return [
+            {"name": f"danger-{number}", "level": "danger", "points": points}
+            for number, value in enumerate(polygons, 1)
+            if (points := _as_polygon(value)) is not None
+        ]
+    single = _as_polygon(payload.get("points"))
+    return [{"name": "danger-1", "level": "danger", "points": single}] if single is not None else []
+
+
+def polygons_from_payload(payload: dict | None) -> list[list[list[int]]]:
+    return [zone["points"] for zone in zones_from_payload(payload)]
 
 
 def payload_size(payload: dict | None) -> tuple[int, int] | None:
@@ -107,18 +122,30 @@ def validate_zone_payload(payload, image_width: int | None = None, image_height:
     data = payload if isinstance(payload, dict) else None
     if data is None:
         raise ValueError("zone JSON must be an object")
-    polygons = polygons_from_payload(data)
+    zones = zones_from_payload(data)
     if "polygons" in data and not isinstance(data.get("polygons"), list):
         raise ValueError("polygons must be a list")
     if isinstance(data.get("polygons"), list) and any(_as_polygon(item) is None for item in data["polygons"]):
         raise ValueError("each polygon needs at least 3 integer [x, y] points")
+    if "zones" in data and not isinstance(data.get("zones"), list):
+        raise ValueError("zones must be a list")
+    if isinstance(data.get("zones"), list) and len(zones) != len(data["zones"]):
+        raise ValueError("each zone needs level danger|warning|safe and at least 3 integer [x, y] points")
+    if isinstance(data.get("zones"), list):
+        for zone in data["zones"]:
+            index = zone.get("index", zone.get("zoneIndex")) if isinstance(zone, dict) else None
+            if index is not None and (not isinstance(index, int) or isinstance(index, bool) or index < 0):
+                raise ValueError("zone index must be a non-negative integer")
     size = payload_size(data)
     if size is None:
         if image_width and image_height:
             size = (int(image_width), int(image_height))
         else:
             raise ValueError("zone width and height must be positive numbers")
-    return {"width": size[0], "height": size[1], "polygons": polygons}
+    threshold = data.get("zoneGapThreshold", 2)
+    if not isinstance(threshold, int) or isinstance(threshold, bool) or threshold < 0:
+        raise ValueError("zoneGapThreshold must be a non-negative integer")
+    return {"width": size[0], "height": size[1], "zoneGapThreshold": threshold, "zones": zones}
 
 
 def load_zone_file(path: Path) -> dict | None:
@@ -131,11 +158,11 @@ def load_zone_file(path: Path) -> dict | None:
     try:
         return validate_zone_payload(payload)
     except ValueError:
-        polygons = polygons_from_payload(payload if isinstance(payload, dict) else None)
+        zones = zones_from_payload(payload if isinstance(payload, dict) else None)
         size = payload_size(payload if isinstance(payload, dict) else None)
-        if not polygons:
+        if not zones:
             return None
-        return {"width": size[0] if size else 0, "height": size[1] if size else 0, "polygons": polygons}
+        return {"width": size[0] if size else 0, "height": size[1] if size else 0, "zoneGapThreshold": 2, "zones": zones}
 
 
 def save_zone_file(path: Path, payload: dict) -> dict:

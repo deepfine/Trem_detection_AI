@@ -13,14 +13,14 @@ from urllib.request import Request, urlopen
 
 import cv2
 
-from camera_zones import load_zone_file, zone_file
+from camera_zones import load_zone_file, polygons_from_payload, zone_file
 from crowd_analysis_protocol import (
     AnalysisJob,
     completed_payload,
     failed_payload,
     parse_analysis_body,
 )
-from frame_objects import YoloDnnDetector
+from frame_objects import YoloDnnDetector, apply_tram_policy
 from frame_faces import ScrfdFaceDetector
 from zone_annotator import start_annotator_thread
 
@@ -128,12 +128,21 @@ class AnalysisRuntime:
                 zone = load_zone_file(zone_file(self.zone_dir, job.congestion_sensor_device_id))
             if zone is None:
                 zone = job.zone
-            if self.object_detector is not None and zone and zone.get("polygons"):
+            if self.object_detector is not None and zone and polygons_from_payload(zone):
                 try:
                     objects, object_ms = self.object_detector.detect(
                         frame,
                         zone,
                         job.target_classes,
+                    )
+                    threshold = zone.get("zoneGapThreshold", 2)
+                    if not isinstance(threshold, int) or isinstance(threshold, bool) or threshold < 0:
+                        threshold = 2
+                    objects = apply_tram_policy(
+                        objects,
+                        job.tram_zone,
+                        threshold,
+                        **job.tram_policy_options(),
                     )
                 except Exception as error:
                     print(f"object detect failed id={job.id} reason={error}", flush=True)
@@ -233,7 +242,9 @@ def main():
     parser.add_argument("--analyzed-dir", type=Path, default=env_path("FRAME_ANALYZED_DIR", "/upload/visit_servant/analyzed"))
     parser.add_argument("--result-url", default=env_str("VISIT_SERVANT_RESULT_URL", "http://api:3535/crowd/results"))
     parser.add_argument("--api-key", default=env_str("ANALYSIS_API_KEY", ""))
-    parser.add_argument("--object-model", type=Path, default=env_path("OBJECT_MODEL_PATH", "result/models/yolov8n.onnx"))
+    parser.add_argument("--object-model", type=Path, default=env_path("OBJECT_MODEL_PATH", "result/models/objects365_yolo26n.onnx"))
+    parser.add_argument("--mobility-model", type=Path, default=env_path("MOBILITY_MODEL_PATH", "result/models/mobility_yolov8s.onnx"))
+    parser.add_argument("--object-device-id", type=int, default=int(env_str("OBJECT_DEVICE_ID", "0")))
     parser.add_argument("--face-model", type=Path, default=env_path("FACE_MODEL_PATH", "result/models/scrfd_det_10g.onnx"))
     parser.add_argument("--face-device-id", type=int, default=int(env_str("FACE_DEVICE_ID", "0")))
     parser.add_argument("--face-det-size", default=env_str("FACE_DET_SIZE", "960x544"))
@@ -246,7 +257,7 @@ def main():
     analyzed_dir = args.analyzed_dir.resolve()
     zone_dir = args.zone_dir.resolve()
     allowed_roots = [analyzed_dir, Path("/upload").resolve()]
-    object_detector = YoloDnnDetector(args.object_model) if args.object_model.is_file() else None
+    object_detector = YoloDnnDetector(args.object_model, args.object_device_id, args.mobility_model) if args.object_model.is_file() else None
     face_width, face_height = (int(value) for value in args.face_det_size.lower().split("x", 1))
     if face_width % 32 or face_height % 32:
         raise ValueError("face detection width and height must be multiples of 32")

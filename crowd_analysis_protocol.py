@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -13,6 +14,34 @@ class AnalysisJob:
     camera: dict
     zone: dict | None = None
     target_classes: tuple[str, ...] = ()
+    tram_zone: int | None = None
+    tram_direction: int = 0
+    tram_zone_uncertainty: int = 0
+    tram_observed_at: datetime | None = None
+    tram_position_max_age_seconds: float | None = None
+    forward_zone_gap_threshold: int | None = None
+    rear_zone_gap_threshold: int | None = None
+    fail_safe_on_missing_tram_position: bool = False
+
+    def tram_position_stale(self) -> bool:
+        if self.tram_observed_at is None or self.tram_position_max_age_seconds is None:
+            return False
+        age = datetime.now(timezone.utc) - self.tram_observed_at.astimezone(timezone.utc)
+        return age.total_seconds() > self.tram_position_max_age_seconds
+
+    def tram_policy_options(self) -> dict:
+        reason = (
+            "TRAM_POSITION_STALE" if self.tram_position_stale()
+            else "TRAM_POSITION_MISSING" if self.tram_zone is None and self.fail_safe_on_missing_tram_position
+            else ""
+        )
+        return {
+            "direction": self.tram_direction,
+            "uncertainty": self.tram_zone_uncertainty,
+            "forward_threshold": self.forward_zone_gap_threshold,
+            "rear_threshold": self.rear_zone_gap_threshold,
+            "fail_safe_reason": reason,
+        }
 
 
 def _as_record(value) -> dict | None:
@@ -31,6 +60,39 @@ def _positive_int(value) -> int | None:
             return None
         return parsed if parsed > 0 else None
     return None
+
+
+def _optional_number(data: dict, key: str, *, integer=True, minimum=0, maximum=None):
+    if key not in data:
+        return None
+    value = data[key]
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int,) if integer else (int, float))
+        or value < minimum
+        or maximum is not None and value > maximum
+    ):
+        kind = "integer" if integer else "number"
+        limit = f" and less than or equal to {maximum}" if maximum is not None else ""
+        raise ValueError(f"{key} must be a {kind} greater than or equal to {minimum}{limit}")
+    return int(value) if integer else float(value)
+
+
+def _optional_datetime(data: dict, key: str) -> datetime | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be an ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"{key} must be an ISO-8601 timestamp") from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"{key} must include a timezone")
+    return parsed
 
 
 def _non_empty_str(value) -> str | None:
@@ -78,6 +140,12 @@ def parse_analysis_body(payload, analyzed_dir: Path, allowed_roots: list[Path]) 
     target_classes = data.get("targetClasses") or []
     if not isinstance(target_classes, list) or not all(isinstance(item, str) and item.strip() for item in target_classes):
         raise ValueError("targetClasses must be a string array")
+    direction = data.get("tramDirection", 0)
+    if isinstance(direction, bool) or direction not in {-1, 0, 1}:
+        raise ValueError("tramDirection must be -1, 0, or 1")
+    fail_safe = data.get("failSafeOnMissingTramPosition", False)
+    if not isinstance(fail_safe, bool):
+        raise ValueError("failSafeOnMissingTramPosition must be a boolean")
     return AnalysisJob(
         id=job_id,
         congestion_sensor_device_id=_positive_int(data.get("congestionSensorDeviceId") or data.get("camera_id")),
@@ -86,7 +154,21 @@ def parse_analysis_body(payload, analyzed_dir: Path, allowed_roots: list[Path]) 
         camera=camera,
         zone=zone,
         target_classes=tuple(item.strip() for item in target_classes),
+        tram_zone=_optional_number(data, "tramZone") if "tramZone" in data else _optional_number(data, "tram_zone"),
+        tram_direction=direction,
+        tram_zone_uncertainty=_optional_number(data, "tramZoneUncertainty", maximum=100) or 0,
+        tram_observed_at=_optional_datetime(data, "tramObservedAt"),
+        tram_position_max_age_seconds=_optional_number(data, "tramPositionMaxAgeSeconds", integer=False),
+        forward_zone_gap_threshold=_optional_number(data, "forwardZoneGapThreshold"),
+        rear_zone_gap_threshold=_optional_number(data, "rearZoneGapThreshold"),
+        fail_safe_on_missing_tram_position=fail_safe,
     )
+
+
+def alert_summary(objects):
+    alerted = [item for item in objects if item.get("alert")]
+    level = "danger" if any(item.get("zoneLevel") == "danger" for item in alerted) else "warning" if alerted else None
+    return level, len(alerted)
 
 
 def completed_payload(
@@ -101,9 +183,10 @@ def completed_payload(
 ) -> dict:
     detected = list(objects or [])
     detected_faces = list(faces or [])
+    alert_level, alert_count = alert_summary(detected)
     methods = ["dm_count"]
     if object_ms is not None:
-        methods.append("yolov8n")
+        methods.append("objects365_yolo26n+mobility_yolov8s")
     if face_ms is not None:
         methods.append("scrfd")
     raw = {
@@ -112,6 +195,8 @@ def completed_payload(
         "objects": detected,
         "detectedFaceCount": len(detected_faces),
         "faces": detected_faces,
+        "alertLevel": alert_level,
+        "alertObjectCount": alert_count,
         "method": "+".join(methods),
         "inference_ms": round(inference_ms, 2),
         "frame_path": job.relative_path,
@@ -133,6 +218,8 @@ def completed_payload(
         "objects": detected,
         "detectedFaceCount": len(detected_faces),
         "faces": detected_faces,
+        "alertLevel": alert_level,
+        "alertObjectCount": alert_count,
         "raw": raw,
     }
 
@@ -152,13 +239,16 @@ def failed_payload(job: AnalysisJob, error_message: str) -> dict:
 
 
 def completed_object_payload(job: AnalysisJob, objects: list[dict], inference_ms: float) -> dict:
+    alert_level, alert_count = alert_summary(objects)
     return {
         "id": job.id,
         "status": "COMPLETED",
         "detectedObjectCount": len(objects),
         "objects": objects,
+        "alertLevel": alert_level,
+        "alertObjectCount": alert_count,
         "raw": {
-            "method": "yolov8n_roi",
+            "method": "objects365_yolo26n+mobility_yolov8s_roi",
             "inference_ms": round(inference_ms, 2),
             "frame_path": job.relative_path,
             "frame_abs_path": str(job.absolute_path),

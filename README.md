@@ -4,15 +4,15 @@ CCTV 또는 백엔드 중계 영상을 입력받아 얼굴 비식별화, 객체 
 
 ## 기능 범위
 
-| 기능 | 구현 | 모델·방식 |
-|---|---|---|
-| 얼굴 블러 | 구현됨 | SCRFD 얼굴 검출 + Gaussian blur |
-| 객체 탐지 | 구현됨 | YOLO ONNX |
-| 객체 추적 | 구현됨 | 프레임 간 중심점 추적 |
-| 위험구역 판정 | 구현됨 | 안전·경고·위험 다각형 구역 |
-| 접근 위험 판정 | 구현됨 | 이동 속도 및 방향 |
-| 군중 계수 | 구현됨 | DM-Count UCF-QNRF 밀도추정 |
-| 군중 계수 정확도 | 미측정 | 운영 CCTV 정답 라벨 필요 |
+| 기능             | 구현   | 모델·방식                      |
+| ---------------- | ------ | ------------------------------- |
+| 얼굴 블러        | 구현됨 | SCRFD 얼굴 검출 + Gaussian blur |
+| 객체 탐지        | 구현됨 | YOLO ONNX                       |
+| 객체 추적        | 구현됨 | 프레임 간 중심점 추적           |
+| 위험구역 판정    | 구현됨 | 안전·경고·위험 다각형 구역    |
+| 접근 위험 판정   | 구현됨 | 이동 속도 및 방향               |
+| 군중 계수        | 구현됨 | DM-Count UCF-QNRF 밀도추정      |
+| 군중 계수 정확도 | 미측정 | 운영 CCTV 정답 라벨 필요        |
 
 ## 처리 구조
 
@@ -88,14 +88,14 @@ python crowd_counter.py \
 
 2026-08-19 로컬 `test_video.mkv`를 1 FPS로 샘플링하였다.
 
-| 항목 | 결과 | 상태 |
-|---|---:|---|
-| 평가 프레임 | 78 | 실측 |
-| 평균 추정 인원 | 33.90명 | 실측 |
-| 최소·최대 추정 인원 | 0명·74명 | 실측 |
-| 평균 추론시간 | 40.29 ms | 실측 |
-| p95 추론시간 | 45.59 ms | 실측 |
-| 정확도·MAE·RMSE | - | 미측정 |
+| 항목                 |      결과 | 상태   |
+| -------------------- | --------: | ------ |
+| 평가 프레임          |        78 | 실측   |
+| 평균 추정 인원       |   33.90명 | 실측   |
+| 최소·최대 추정 인원 | 0명·74명 | 실측   |
+| 평균 추론시간        |  40.29 ms | 실측   |
+| p95 추론시간         |  45.59 ms | 실측   |
+| 정확도·MAE·RMSE    |         - | 미측정 |
 
 위 인원 수는 모델 출력이며 정답 인원과 비교한 정확도가 아니다. UCF-QNRF 기반 모델은 고밀도 군중 사진에 최적화되어 있으므로, 운영 CCTV 표본에 인원 정답을 부여한 뒤 MAE와 RMSE를 산출해야 한다.
 
@@ -175,13 +175,13 @@ python crowd_analysis_server.py \
   --result-url http://127.0.0.1:3535/crowd/results
 ```
 
-| 변수 | 기본값 | 역할 |
-|---|---|---|
-| `FRAME_ANALYZED_DIR` | `/upload/visit_servant/analyzed` | 상대경로를 붙일 루트 |
-| `CROWD_MODEL_PATH` | `result/models/dm_count_qnrf.pth` | DM-Count 가중치 |
-| `CROWD_DEVICE` | `cuda:0` | 추론 장치 |
-| `VISIT_SERVANT_RESULT_URL` | `http://api:3535/crowd/results` | 결과 회신 URL |
-| `ANALYSIS_API_KEY` | 비움 | `X-Analysis-Key` |
+| 변수                         | 기본값                              | 역할                 |
+| ---------------------------- | ----------------------------------- | -------------------- |
+| `FRAME_ANALYZED_DIR`       | `/upload/visit_servant/analyzed`  | 상대경로를 붙일 루트 |
+| `CROWD_MODEL_PATH`         | `result/models/dm_count_qnrf.pth` | DM-Count 가중치      |
+| `CROWD_DEVICE`             | `cuda:0`                          | 추론 장치            |
+| `VISIT_SERVANT_RESULT_URL` | `http://api:3535/crowd/results`   | 결과 회신 URL        |
+| `ANALYSIS_API_KEY`         | 비움                                | `X-Analysis-Key`   |
 
 요청 본문은 `id`, `frame_abs_path`(또는 `frame_path`), `congestionSensorDeviceId`를 사용한다. 결과는 `countedPeople`과 `status=COMPLETED|FAILED`이다.
 
@@ -221,7 +221,7 @@ python zone_annotator.py \
   --port 8765
 ```
 
-## 테스트
+## 테스트-oc
 
 ```bash
 pytest -q
@@ -229,14 +229,14 @@ pytest -q
 
 ## 주요 파일
 
-| 파일 | 역할 |
-|---|---|
-| `object_analysis_server.py` | 2개 선 사이의 객체 검출 및 결과 전달 서버 |
-| `crowd_analysis_server.py` | `visit_servant_api` 핸드오프 HTTP 서버 |
-| `crowd_analysis_protocol.py` | 분석 요청 경로 해석 및 결과 JSON |
-| `crowd_counter.py` | DM-Count 추론 및 영상 단독 평가 |
-| `process_blur_anomalies.py` | 얼굴 블러·객체 탐지·위험 판정·군중 계수 통합 처리 |
-| `anomaly_rules.py` | 구역 진입 및 접근 위험 규칙 |
-| `zone_annotator.py` | 카메라별 위험구역 웹 편집기 |
-| `camera_zones.py` | 장비 ID ↔ 구역 JSON 매칭 |
-| `zones.example.json` | 다각형 구역 예시 |
+| 파일                           | 역할                                                 |
+| ------------------------------ | ---------------------------------------------------- |
+| `object_analysis_server.py`  | 2개 선 사이의 객체 검출 및 결과 전달 서버            |
+| `crowd_analysis_server.py`   | `visit_servant_api` 핸드오프 HTTP 서버             |
+| `crowd_analysis_protocol.py` | 분석 요청 경로 해석 및 결과 JSON                     |
+| `crowd_counter.py`           | DM-Count 추론 및 영상 단독 평가                      |
+| `process_blur_anomalies.py`  | 얼굴 블러·객체 탐지·위험 판정·군중 계수 통합 처리 |
+| `anomaly_rules.py`           | 구역 진입 및 접근 위험 규칙                          |
+| `zone_annotator.py`          | 카메라별 위험구역 웹 편집기                          |
+| `camera_zones.py`            | 장비 ID ↔ 구역 JSON 매칭                            |
+| `zones.example.json`         | 다각형 구역 예시                                     |

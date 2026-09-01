@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -27,7 +28,14 @@ class FakeObjectDetector:
 
     def detect(self, frame, zone=None, target_classes=()):
         assert frame is not None
-        return [{"class": "person", "confidence": 0.91, "bbox": [1, 2, 3, 4]}], 8.5
+        return [{
+            "class": "person",
+            "confidence": 0.91,
+            "bbox": [1, 2, 3, 4],
+            "zoneLevel": "danger",
+            "zoneName": "track-z8",
+            "zoneIndex": 8,
+        }], 8.5
 
 
 class FakeFaceDetector:
@@ -54,6 +62,14 @@ def test_parse_prefers_absolute_path(tmp_path):
             "frame_path": "27_1/a.jpg",
             "frame_abs_path": str(frame),
             "camera": {"id": 1, "memo": "27"},
+            "tramZone": 6,
+            "tramDirection": 1,
+            "tramZoneUncertainty": 1,
+            "tramObservedAt": "2026-09-01T14:30:00+09:00",
+            "tramPositionMaxAgeSeconds": 2.5,
+            "forwardZoneGapThreshold": 3,
+            "rearZoneGapThreshold": 1,
+            "failSafeOnMissingTramPosition": True,
         },
         tmp_path,
         [tmp_path],
@@ -62,6 +78,45 @@ def test_parse_prefers_absolute_path(tmp_path):
     assert job.congestion_sensor_device_id == 1
     assert job.absolute_path == frame.resolve()
     assert job.camera["memo"] == "27"
+    assert job.tram_zone == 6
+    assert job.tram_direction == 1
+    assert job.tram_zone_uncertainty == 1
+    assert job.tram_observed_at.isoformat() == "2026-09-01T14:30:00+09:00"
+    assert job.tram_position_max_age_seconds == 2.5
+    assert job.forward_zone_gap_threshold == 3
+    assert job.rear_zone_gap_threshold == 1
+    assert job.fail_safe_on_missing_tram_position is True
+
+
+def test_tram_position_age_and_validation(tmp_path):
+    frame = tmp_path / "a.jpg"
+    write_jpeg(frame)
+    job = parse_analysis_body(
+        {
+            "id": 1,
+            "frame_abs_path": str(frame),
+            "tramZone": 0,
+            "tramObservedAt": (datetime.now(timezone.utc) - timedelta(seconds=3)).isoformat(),
+            "tramPositionMaxAgeSeconds": 1,
+        },
+        tmp_path,
+        [tmp_path],
+    )
+    assert job.tram_zone == 0 and job.tram_position_stale()
+
+    try:
+        parse_analysis_body({"id": 2, "frame_abs_path": str(frame), "tramDirection": 2}, tmp_path, [tmp_path])
+    except ValueError as error:
+        assert "tramDirection" in str(error)
+    else:
+        raise AssertionError("expected ValueError")
+
+    try:
+        parse_analysis_body({"id": 3, "frame_abs_path": str(frame), "tramZoneUncertainty": 101}, tmp_path, [tmp_path])
+    except ValueError as error:
+        assert "tramZoneUncertainty" in str(error)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_parse_joins_relative_path(tmp_path):
@@ -113,7 +168,7 @@ def test_completed_payload_includes_objects():
     assert payload["detectedObjectCount"] == 1
     assert payload["objects"] == objects
     assert payload["raw"]["objects"] == objects
-    assert payload["raw"]["method"] == "dm_count+yolov8n"
+    assert payload["raw"]["method"] == "dm_count+objects365_yolo26n+mobility_yolov8s"
     assert payload["raw"]["crowd_ms"] == 40.29
     assert payload["raw"]["object_ms"] == 12.11
 
@@ -210,6 +265,7 @@ def test_http_includes_object_detections(tmp_path):
                 "congestionSensorDeviceId": 1,
                 "frame_path": "27_1/a.jpg",
                 "frame_abs_path": str(frame),
+                "tramZone": 6,
             },
             tmp_path,
             [tmp_path],
@@ -218,6 +274,10 @@ def test_http_includes_object_detections(tmp_path):
     runtime.jobs.join()
     assert posted[0]["detectedObjectCount"] == 1
     assert posted[0]["objects"][0]["class"] == "person"
+    assert posted[0]["objects"][0]["zoneGap"] == 2
+    assert posted[0]["objects"][0]["alert"] is True
+    assert posted[0]["alertLevel"] == "danger"
+    assert posted[0]["alertObjectCount"] == 1
     assert posted[0]["raw"]["object_ms"] == 8.5
 
 

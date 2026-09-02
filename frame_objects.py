@@ -128,7 +128,7 @@ def apply_tram_policy(
     fail_safe_reason="",
 ):
     if tram_zone is None and not fail_safe_reason:
-        return objects
+        return [{**item, "alert": False, "alertReason": ""} for item in objects]
     candidates = list(range(max(0, tram_zone - uncertainty), tram_zone + uncertainty + 1)) if tram_zone is not None else []
     enriched = []
     for detected in objects:

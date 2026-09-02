@@ -84,6 +84,9 @@ def test_tram_policy_uses_uncertainty_direction_and_fail_safe():
     missing = apply_tram_policy([person], None, 2, fail_safe_reason="TRAM_POSITION_MISSING")[0]
     assert missing["alert"] is True and missing["alertReason"] == "TRAM_POSITION_MISSING"
 
+    no_position = apply_tram_policy([person], None, 2)[0]
+    assert no_position["alert"] is False and no_position["alertReason"] == ""
+
 
 def test_list_cameras_and_latest_jpeg(tmp_path):
     camera_dir = tmp_path / "analyzed" / "33_4" / "2026" / "08" / "19"

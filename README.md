@@ -7,10 +7,10 @@ CCTV 또는 백엔드 중계 영상을 입력받아 얼굴 비식별화, 객체 
 | 기능             | 구현   | 모델·방식                      |
 | ---------------- | ------ | ------------------------------- |
 | 얼굴 블러        | 구현됨 | SCRFD 얼굴 검출 + Gaussian blur |
-| 객체 탐지        | 구현됨 | YOLO ONNX                       |
+| 객체 탐지        | 구현됨 | Objects365 YOLO26n + 이동수단 YOLOv8s |
 | 객체 추적        | 구현됨 | 프레임 간 중심점 추적           |
 | 위험구역 판정    | 구현됨 | 안전·경고·위험 다각형 구역    |
-| 접근 위험 판정   | 구현됨 | 이동 속도 및 방향               |
+| 접근 위험 판정   | 구현됨 | 객체 Zone·트램 Zone 간격 및 진행 방향 |
 | 군중 계수        | 구현됨 | DM-Count UCF-QNRF 밀도추정      |
 | 군중 계수 정확도 | 미측정 | 운영 CCTV 정답 라벨 필요        |
 
@@ -44,12 +44,35 @@ pip install opencv-python numpy torch onnxruntime-gpu ultralytics insightface py
 
 ```text
 result/models/scrfd_det_10g.onnx
-result/models/yolov8n.onnx
-result/models/assistive_yolov8s_worldv2.pt
+result/models/objects365_yolo26n.onnx
+result/models/mobility_yolov8s.onnx
 result/models/dm_count_qnrf.pth
 ```
 
 모델 파일은 용량 때문에 Git 저장 대상에서 제외하였다.
+
+객체 탐지는 다음 클래스를 기본 지원한다.
+
+```text
+person, bicycle, motorcycle, scooter, wheelchair, cart,
+car, bus, truck, backpack, suitcase
+```
+
+Objects365 모델의 `trolley`, `rickshaw`, `carriage`는 결과 JSON에서 `cart`로 통합한다. 이동수단 모델은 `Bike`, `Pedestrian`, `Scooter`, `Wheelchair` 중 Objects365에서 누락된 `scooter`, `wheelchair` 검출을 보강한다. 가중치와 Ultralytics 런타임을 서비스에 배포할 때에는 AGPL-3.0 또는 별도 상용 라이선스 조건을 확인한다.
+
+```bash
+curl -L --fail -o yolo26n-objv1-150.pt \
+  https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-objv1-150.pt
+curl -L --fail -o result/models/mobility_yolov8s.pt \
+  https://raw.githubusercontent.com/rolson24/BWCT-Tracker/electron-app/backend/tracking/models/yolov8s-2024-02-16-best.pt
+
+python - <<'PY'
+from ultralytics import YOLO
+YOLO("yolo26n-objv1-150.pt").export(format="onnx", imgsz=640, simplify=True, opset=17)
+YOLO("result/models/mobility_yolov8s.pt").export(format="onnx", imgsz=640, simplify=True, opset=17)
+PY
+mv yolo26n-objv1-150.onnx result/models/objects365_yolo26n.onnx
+```
 
 ## DM-Count 가중치
 
@@ -101,7 +124,18 @@ python crowd_counter.py \
 
 ## ROI 객체 분석 Docker 실행
 
-현재 단순화된 운영 경로는 2개 선으로 구성한 ROI 내부의 객체만 검출한다. 객체 바운딩 박스의 하단 중앙점을 ROI 포함 여부의 기준점으로 사용한다. 프레임은 HTTP로 전송하지 않고 백엔드와 AI 컨테이너가 공유하는 경로에서 읽는다.
+백엔드 요청·callback 전체 규격은 [`BACKEND_INTEGRATION.md`](BACKEND_INTEGRATION.md)를 참조한다.
+
+운영 경로는 카메라별 `danger`, `warning`, `safe` POLYGON에서 객체를 검출한다. 객체 바운딩 박스의 하단 중앙점을 객체가 위치한 구역의 기준점으로 사용한다. POLYGON 밖은 `safe-default`로 판정한다. 기존 2선 ROI JSON도 하위 호환으로 지원한다. 프레임은 HTTP로 전송하지 않고 백엔드와 AI 컨테이너가 공유하는 경로에서 읽는다.
+
+| 화면 표시 | JSON `level` | 판정 및 전달 기준 |
+| --- | --- | --- |
+| 위험 | `danger` | 최우선 구역이며 접근 조건 충족 시 위험 알림 대상 |
+| 주의·경계 | `warning` | 접근 조건 충족 시 주의 알림 대상 |
+| 안전 | `safe` | 모니터링만 수행하며 알림 없음 |
+| 안전(미지정 영역) | `safe-default` | POLYGON 밖 객체에 AI 서버가 자동 부여 |
+
+객체가 여러 POLYGON에 동시에 포함되면 `danger > warning > safe` 순으로 판정한다. 백엔드에는 한글 표시명이 아니라 `zoneLevel`의 영문 enum과 `zoneName`을 전달한다. 현재 구현에서 주의와 경계는 별도 단계가 아니라 `warning` 한 단계이다.
 
 ```bash
 docker build -t trem-object-ai .
@@ -112,7 +146,8 @@ docker run --rm --gpus all \
   --add-host host.docker.internal:host-gateway \
   -e OBJECT_DEVICE_ID=0 \
   -e OBJECT_RESULT_URL=http://host.docker.internal:3535/object/results \
-  -v "$(pwd)/result/models/yolov8n.onnx:/app/result/models/yolov8n.onnx:ro" \
+  -v "$(pwd)/result/models/objects365_yolo26n.onnx:/app/result/models/objects365_yolo26n.onnx:ro" \
+  -v "$(pwd)/result/models/mobility_yolov8s.onnx:/app/result/models/mobility_yolov8s.onnx:ro" \
   -v "/upload/visit_servant/analyzed:/upload/visit_servant/analyzed:ro" \
   trem-object-ai
 ```
@@ -123,20 +158,39 @@ docker run --rm --gpus all \
 {
   "id": 41,
   "congestionSensorDeviceId": 27,
+  "tramZone": 6,
+  "tramDirection": 1,
+  "tramZoneUncertainty": 1,
+  "tramObservedAt": "2026-09-01T10:20:30+09:00",
+  "tramPositionMaxAgeSeconds": 2.0,
+  "forwardZoneGapThreshold": 3,
+  "rearZoneGapThreshold": 1,
+  "failSafeOnMissingTramPosition": true,
   "frame_abs_path": "/upload/visit_servant/analyzed/27/frame.jpg",
   "zone": {
     "width": 1280,
     "height": 720,
-    "lines": [
-      [[120, 180], [80, 650]],
-      [[1050, 170], [1200, 650]]
+    "zoneGapThreshold": 2,
+    "zones": [
+      {
+        "name": "track-z8",
+        "level": "danger",
+        "index": 8,
+        "points": [[120, 180], [80, 650], [700, 650], [650, 180]]
+      },
+      {
+        "name": "rail-z8",
+        "level": "warning",
+        "index": 8,
+        "points": [[650, 180], [700, 650], [1200, 650], [1050, 170]]
+      }
     ]
   },
-  "targetClasses": ["person", "bicycle", "motorcycle", "car", "truck", "bus"]
+  "targetClasses": ["person", "bicycle", "motorcycle", "scooter", "wheelchair", "cart"]
 }
 ```
 
-`width`와 `height`는 좌표를 작성한 기준 해상도이다. 실제 이미지 해상도가 다르면 좌표를 자동으로 보정한다. `targetClasses`를 생략하면 `person`, `bicycle`, `motorcycle`, `car`, `bus`, `truck`, `backpack`, `suitcase`를 검출한다.
+`width`와 `height`는 좌표 작성 기준 해상도이며 실제 이미지 해상도에 맞춰 자동 보정한다. `tramZone`과 `zones[].index`의 차이로 접근 여부를 판정한다. `tramDirection`은 `-1`, `0`, `1`을 사용하며, 진행 방향과 후방 임계값을 각각 적용할 수 있다. `tramZoneUncertainty`가 있으면 후보 Zone 전체 중 최소 간격을 적용한다. `tramZone`이 누락된 경우 `failSafeOnMissingTramPosition=true`이면 보수적 알림을 생성한다. 관측 시각이 `tramPositionMaxAgeSeconds`를 초과하면 설정값과 관계없이 위치 만료 알림을 생성한다. 현재 `alert=true` 적용 대상은 `danger` 또는 `warning` 구역의 사람으로 한정한다.
 
 완료 결과는 `OBJECT_RESULT_URL`로 전달한다.
 
@@ -146,22 +200,42 @@ docker run --rm --gpus all \
   "status": "COMPLETED",
   "detectedObjectCount": 2,
   "objects": [
-    {"class": "person", "confidence": 0.9123, "bbox": [120, 80, 260, 430]},
-    {"class": "bicycle", "confidence": 0.84, "bbox": [310, 210, 510, 460]}
+    {
+      "class": "person",
+      "confidence": 0.9123,
+      "bbox": [120, 80, 260, 430],
+      "zoneLevel": "danger",
+      "zoneName": "track-z8",
+      "zoneIndex": 8,
+      "tramZone": 6,
+      "tramZoneCandidates": [5, 6, 7],
+      "tramDirection": 1,
+      "zoneGap": 1,
+      "zoneGapThreshold": 3,
+      "alert": true,
+      "alertReason": "TRAM_POSITION_UNCERTAIN"
+    },
+    {
+      "class": "scooter",
+      "confidence": 0.84,
+      "bbox": [310, 210, 510, 460],
+      "zoneLevel": "safe",
+      "zoneName": "safe-default",
+      "alert": false
+    }
   ],
-  "detectedFaceCount": 1,
-  "faces": [
-    {"confidence": 0.94, "bbox": [120, 80, 260, 230]}
-  ],
+  "alertLevel": "danger",
+  "alertObjectCount": 1,
   "raw": {
-    "method": "dm_count+yolov8n+scrfd",
-    "inference_ms": 54.4,
-    "face_ms": 5.9
+    "method": "objects365_yolo26n+mobility_yolov8s_roi",
+    "inference_ms": 17.2,
+    "frame_abs_path": "/upload/visit_servant/analyzed/27/frame.jpg",
+    "congestionSensorDeviceId": 27
   }
 }
 ```
 
-`faces[].bbox`는 원본 이미지 기준 `[x1, y1, x2, y2]` 좌표이다. AI 서버는 얼굴 영역을 수정하지 않으며, 백엔드는 이 좌표를 사용하여 모자이크 또는 블러 처리를 수행한다.
+`objects[].bbox`는 원본 이미지 기준 `[x1, y1, x2, y2]` 좌표이다. 얼굴 좌표는 통합 분석 `POST /crowd/results`의 `faces[]`로 전달하며, AI 서버는 원본 이미지를 수정하지 않는다. 백엔드는 얼굴 좌표를 사용하여 모자이크 또는 블러를 적용한다.
 
 ## Visit Servant 연동
 
@@ -181,9 +255,12 @@ python crowd_analysis_server.py \
 | `CROWD_MODEL_PATH`         | `result/models/dm_count_qnrf.pth` | DM-Count 가중치      |
 | `CROWD_DEVICE`             | `cuda:0`                          | 추론 장치            |
 | `VISIT_SERVANT_RESULT_URL` | `http://api:3535/crowd/results`   | 결과 회신 URL        |
+| `OBJECT_MODEL_PATH`        | `result/models/objects365_yolo26n.onnx` | 일반 객체 모델 |
+| `MOBILITY_MODEL_PATH`      | `result/models/mobility_yolov8s.onnx` | 킥보드·휠체어 보강 모델 |
+| `OBJECT_DEVICE_ID`         | `0` | 객체 탐지 GPU ID |
 | `ANALYSIS_API_KEY`         | 비움                                | `X-Analysis-Key`   |
 
-요청 본문은 `id`, `frame_abs_path`(또는 `frame_path`), `congestionSensorDeviceId`를 사용한다. 결과는 `countedPeople`과 `status=COMPLETED|FAILED`이다.
+요청 본문은 `id`, `frame_abs_path`(또는 `frame_path`), `congestionSensorDeviceId`를 필수 식별 정보로 사용한다. 거리 판정 시 `tramZone`과 선택 정책 필드를 추가한다. 결과는 `countedPeople`, 객체·얼굴 좌표, 구역 판정, 알림 정보 및 `status=COMPLETED|FAILED`를 포함한다.
 
 ## 통합 분석
 
@@ -209,9 +286,9 @@ python process_blur_anomalies.py \
 
 ## 카메라별 구역 설정
 
-`crowd_analysis_server.py`가 기동되면 구역 편집기도 함께 열린다. 브라우저에서 `http://localhost:8765`에 접속해 카메라 최신 분석 JPEG 위에 점을 찍어 위험구역 다각형을 저장한다.
+`crowd_analysis_server.py`가 기동되면 구역 편집기도 함께 열린다. 브라우저에서 `http://localhost:8765`에 접속해 카메라 최신 분석 JPEG 위에 `danger`, `warning`, `safe` POLYGON과 객체 Zone 번호를 저장한다.
 
-파일은 `/upload/visit_servant/zones/{장비ID}.json`이다. 분석 요청마다 `congestionSensorDeviceId`로 이 파일을 다시 읽어, 다각형 안의 객체만 결과에 남긴다.
+파일은 `/upload/visit_servant/zones/{장비ID}.json`이다. 분석 요청마다 `congestionSensorDeviceId`로 파일을 다시 읽는다. 중첩 POLYGON은 `danger > warning > safe` 순으로 판정하고, 지정 POLYGON 밖은 `safe-default`로 분류한다.
 
 ```bash
 python zone_annotator.py \
@@ -221,7 +298,7 @@ python zone_annotator.py \
   --port 8765
 ```
 
-## 테스트-oc
+## 테스트
 
 ```bash
 pytest -q
@@ -231,7 +308,7 @@ pytest -q
 
 | 파일                           | 역할                                                 |
 | ------------------------------ | ---------------------------------------------------- |
-| `object_analysis_server.py`  | 2개 선 사이의 객체 검출 및 결과 전달 서버            |
+| `object_analysis_server.py`  | POLYGON 구역 객체 검출 및 결과 전달 서버             |
 | `crowd_analysis_server.py`   | `visit_servant_api` 핸드오프 HTTP 서버             |
 | `crowd_analysis_protocol.py` | 분석 요청 경로 해석 및 결과 JSON                     |
 | `crowd_counter.py`           | DM-Count 추론 및 영상 단독 평가                      |

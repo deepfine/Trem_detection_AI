@@ -2,3 +2,4 @@
 torch==2.5.1+cu124
 opencv-python-headless==4.10.0.84
 onnxruntime-gpu==1.23.2
+norfair==2.2.0

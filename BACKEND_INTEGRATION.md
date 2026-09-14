@@ -160,7 +160,10 @@ Content-Type: application/json
 3. 중첩 시 `danger > warning > safe` 우선순위를 적용한다.
 4. `zoneIndex`와 `tramZone`의 차이를 계산한다.
 5. 객체가 `person`이고 `danger` 또는 `warning`이며 Zone 간격 조건을 충족하면 `alert=true`로 설정한다.
-6. AI 서버가 결과 callback을 전송한다.
+6. 동일 카메라의 객체 위치에 대한 Kalman 예측, 전역 거리 매칭 및 외형 특징 재식별을 수행하여 `trackId`를 부여한다.
+7. 이전 Zone과 현재 Zone을 비교하여 `zoneTransition`을 산출한다.
+8. 이전 알림 상태와 현재 알림 상태를 비교하여 `alertEvent`와 `alertNotify`를 산출한다.
+9. AI 서버가 결과 callback을 전송한다.
 
 자전거, 오토바이, 킥보드, 휠체어와 리어카는 검출·저장 대상이지만 현재 알림 대상은 사람으로 한정한다. 위험 POLYGON에 객체가 있어도 트램 접근 조건을 충족하지 않으면 `alert=false`이다. 백엔드는 `zoneLevel`만으로 알림을 생성하지 않고 `alert`를 최종 신호로 사용한다.
 
@@ -199,7 +202,12 @@ X-Analysis-Key: {ANALYSIS_API_KEY}  # 설정한 경우에만 포함
       "zoneGap": 1,
       "zoneGapThreshold": 3,
       "alert": true,
-      "alertReason": "TRAM_POSITION_UNCERTAIN"
+      "alertReason": "TRAM_POSITION_UNCERTAIN",
+      "trackId": 1,
+      "previousZoneLevel": "warning",
+      "zoneTransition": "WARNING_TO_DANGER",
+      "alertEvent": "ESCALATE",
+      "alertNotify": true
     },
     {
       "class": "scooter",
@@ -207,11 +215,17 @@ X-Analysis-Key: {ANALYSIS_API_KEY}  # 설정한 경우에만 포함
       "bbox": [310, 210, 510, 460],
       "zoneLevel": "safe",
       "zoneName": "safe-default",
-      "alert": false
+      "alert": false,
+      "trackId": 2,
+      "previousZoneLevel": null,
+      "zoneTransition": "NONE",
+      "alertEvent": "NONE",
+      "alertNotify": false
     }
   ],
   "alertLevel": "danger",
   "alertObjectCount": 1,
+  "alertEventCount": 1,
   "raw": {
     "method": "objects365_yolo26n+mobility_yolov8s_roi",
     "inference_ms": 17.2,
@@ -229,8 +243,14 @@ X-Analysis-Key: {ANALYSIS_API_KEY}  # 설정한 경우에만 포함
 | `objects[].zoneLevel` | 대시보드 표시 단계 |
 | `objects[].alert` | 글래스 앱·대시보드 알림의 최종 boolean 신호 |
 | `objects[].alertReason` | 알림 원인 코드 |
+| `objects[].trackId` | 동일 카메라의 활성 추적 구간에서 사용하는 객체 식별자 |
+| `objects[].previousZoneLevel` | 직전 검출 프레임의 Zone 단계. 최초 검출은 `null` |
+| `objects[].zoneTransition` | Zone 단계 전이. 예: `WARNING_TO_DANGER`, `DANGER_TO_SAFE` |
+| `objects[].alertEvent` | 알림 상태 전이: `ENTER`, `ESCALATE`, `STAY`, `EXIT`, `NONE` |
+| `objects[].alertNotify` | 신규·격상·해제 통지가 필요한 경우 `true`. `STAY`는 `false` |
 | `alertLevel` | 알림 객체 중 최상위 단계. 알림이 없으면 `null` |
 | `alertObjectCount` | `alert=true`인 객체 수 |
+| `alertEventCount` | `alertNotify=true`인 객체 수 |
 
 `alertReason`은 다음 값을 사용한다.
 
@@ -281,13 +301,16 @@ X-Analysis-Key: {ANALYSIS_API_KEY}  # 설정한 경우에만 포함
 ```text
 if status == "FAILED":
     실패 기록 및 재처리 정책 적용
-elif alertObjectCount > 0:
-    objects 중 alert == true인 항목만 글래스 앱·대시보드에 알림
 else:
-    분석 결과만 저장하고 알림 없음
+    현재 경보 상태를 갱신
+    objects 중 alertNotify == true인 항목을 순회
+    alertEvent가 EXIT이면 기존 알림 해제
+    나머지는 신규 또는 격상 알림 전송
 ```
 
-현재 결과는 프레임별 상태이며 `ENTER` 또는 `EXIT` 전환 이벤트가 아니다. 객체가 영역에 머무르면 4 FPS 기준으로 `alert=true` callback이 반복될 수 있다. 백엔드는 `congestionSensorDeviceId + zoneName + class` 기준의 알림 유지·중복 억제 정책을 적용한다. 객체별 고유 `trackId`와 1회성 진입 이벤트가 필요하면 AI 추적 결과를 callback 규격에 추가해야 한다.
+`alert`는 현재 프레임의 경보 상태이므로 객체가 위험 범위에 머무르는 동안 `true`를 유지한다. `alertNotify`는 `ENTER`, `ESCALATE`, `EXIT` 시점에만 `true`이므로 신규 알림의 반복 전송을 억제한다. `WARNING_TO_DANGER` 전이 중 기존 알림이 유지되는 경우 `alertEvent=ESCALATE`를 산출한다.
+
+`trackId`는 `congestionSensorDeviceId`별 Norfair multi-object tracking 결과이다. Kalman 위치 예측과 HSV 외형 특징을 함께 적용하여 객체 교차와 일시 가림 이후의 ID 전환을 억제하며, 최대 30개 분석 프레임의 미검출 상태와 최대 60개 분석 프레임의 외형 재식별 후보를 유지한다. 분석 프로세스 재시작 이후에는 식별자가 재할당되므로 영구 DB 식별자로 사용하지 않는다.
 
 ## 통합 분석 callback
 

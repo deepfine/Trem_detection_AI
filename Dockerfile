@@ -25,9 +25,12 @@ ENV PYTHONUNBUFFERED=1 \
     FACE_MODEL_PATH=/app/result/models/scrfd_det_10g.onnx \
     FACE_DEVICE_ID=0 \
     FACE_DET_SIZE=960x544 \
-    FACE_THRESHOLD=0.35
+    FACE_THRESHOLD=0.35 \
+    FRAME_ZONE_DIR=/upload/visit_servant/zones \
+    ZONE_ANNOTATOR_HOST=0.0.0.0 \
+    ZONE_ANNOTATOR_PORT=8765
 
-EXPOSE 8080
+EXPOSE 8080 8765
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
     CMD python3 -c "import os; from urllib.request import urlopen; urlopen('http://127.0.0.1:' + os.environ.get('ANALYSIS_PORT', '8080') + '/health', timeout=2).read()"

@@ -62,7 +62,27 @@ const gap = document.getElementById("gap");
 const img = new Image();
 let points = [];
 let zones = [];
+let cameras = [];
 const colors = {danger: "#ff3030", warning: "#ffb000", safe: "#20a050"};
+const CAMERA_ZONE = {27: 8, 35: 7, 33: 6, 41: 5, 39: 4, 37: 3, 29: 2, 31: 1};
+
+function zoneCode(index) {
+  return Number.isInteger(index) ? `C${String(index).padStart(2, "0")}` : "";
+}
+
+function selectedCamera() {
+  return cameras.find(item => String(item.id) === camera.value);
+}
+
+function syncZoneIndex() {
+  const loaded = zones.find(zone => Number.isInteger(zone.index));
+  if (loaded) {
+    zoneIndex.value = loaded.index;
+    return;
+  }
+  const mapped = CAMERA_ZONE[Number(selectedCamera()?.name)];
+  zoneIndex.value = mapped === undefined ? "" : mapped;
+}
 
 function draw() {
   if (img.complete && img.naturalWidth) ctx.drawImage(img, 0, 0);
@@ -95,6 +115,7 @@ async function selectCamera() {
   const data = res.ok ? await res.json() : {zones: []};
   zones = data.zones || (data.polygons || []).map((points, i) => ({name: `danger-${i + 1}`, level: "danger", points}));
   gap.value = data.zoneGapThreshold ?? 2;
+  syncZoneIndex();
   img.src = `/frame/${encodeURIComponent(camera.value)}.jpg?t=${Date.now()}`;
 }
 
@@ -140,7 +161,11 @@ document.getElementById("save").onclick = async () => {
 };
 
 fetch("/cameras").then(r => r.json()).then(items => {
-  for (const item of items) camera.add(new Option(`${item.name} (${item.id})`, String(item.id)));
+  cameras = items;
+  for (const item of items) {
+    const code = zoneCode(CAMERA_ZONE[Number(item.name)]);
+    camera.add(new Option(`${item.name} (${item.id})${code ? ` ${code}` : ""}`, String(item.id)));
+  }
   if (items.length) selectCamera();
   else status.textContent = "분석된 카메라 폴더가 없습니다.";
 });

@@ -171,6 +171,54 @@ def alert_summary(objects):
     return level, len(alerted)
 
 
+def alert_event_count(objects):
+    return sum(bool(item.get("alertNotify")) for item in objects)
+
+
+CALLBACK_BODY_KEYS = (
+    "id",
+    "status",
+    "countedPeople",
+    "detectedObjectCount",
+    "objects",
+    "alertLevel",
+    "alertObjectCount",
+    "detectedFaceCount",
+    "faces",
+    "raw",
+    "errorMessage",
+)
+CALLBACK_OBJECT_KEYS = (
+    "class",
+    "confidence",
+    "bbox",
+    "zoneLevel",
+    "zoneName",
+    "zoneIndex",
+    "tramZone",
+    "tramZoneCandidates",
+    "tramDirection",
+    "zoneGap",
+    "zoneGapThreshold",
+    "alert",
+    "alertReason",
+)
+CALLBACK_FACE_KEYS = ("confidence", "bbox")
+
+
+def _pick(item: dict, keys: tuple[str, ...]) -> dict:
+    return {key: item[key] for key in keys if key in item}
+
+
+def api_callback_payload(payload: dict) -> dict:
+    body = _pick(payload, CALLBACK_BODY_KEYS)
+    if isinstance(body.get("objects"), list):
+        body["objects"] = [_pick(item, CALLBACK_OBJECT_KEYS) if isinstance(item, dict) else item for item in body["objects"]]
+    if isinstance(body.get("faces"), list):
+        body["faces"] = [_pick(item, CALLBACK_FACE_KEYS) if isinstance(item, dict) else item for item in body["faces"]]
+    return body
+
+
 def completed_payload(
     job: AnalysisJob,
     counted_people: int,
@@ -184,6 +232,7 @@ def completed_payload(
     detected = list(objects or [])
     detected_faces = list(faces or [])
     alert_level, alert_count = alert_summary(detected)
+    event_count = alert_event_count(detected)
     methods = ["dm_count"]
     if object_ms is not None:
         methods.append("objects365_yolo26n+mobility_yolov8s")
@@ -197,6 +246,7 @@ def completed_payload(
         "faces": detected_faces,
         "alertLevel": alert_level,
         "alertObjectCount": alert_count,
+        "alertEventCount": event_count,
         "method": "+".join(methods),
         "inference_ms": round(inference_ms, 2),
         "frame_path": job.relative_path,
@@ -220,6 +270,7 @@ def completed_payload(
         "faces": detected_faces,
         "alertLevel": alert_level,
         "alertObjectCount": alert_count,
+        "alertEventCount": event_count,
         "raw": raw,
     }
 
@@ -240,6 +291,7 @@ def failed_payload(job: AnalysisJob, error_message: str) -> dict:
 
 def completed_object_payload(job: AnalysisJob, objects: list[dict], inference_ms: float) -> dict:
     alert_level, alert_count = alert_summary(objects)
+    event_count = alert_event_count(objects)
     return {
         "id": job.id,
         "status": "COMPLETED",
@@ -247,6 +299,7 @@ def completed_object_payload(job: AnalysisJob, objects: list[dict], inference_ms
         "objects": objects,
         "alertLevel": alert_level,
         "alertObjectCount": alert_count,
+        "alertEventCount": event_count,
         "raw": {
             "method": "objects365_yolo26n+mobility_yolov8s_roi",
             "inference_ms": round(inference_ms, 2),

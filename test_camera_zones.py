@@ -1,3 +1,5 @@
+import numpy as np
+
 from camera_zones import (
     latest_jpeg,
     list_cameras,
@@ -9,7 +11,7 @@ from camera_zones import (
     zones_from_payload,
     zone_file,
 )
-from frame_objects import apply_tram_policy, objects_in_areas, objects_in_polygons, zone_areas, zone_polygon, zone_polygons
+from frame_objects import apply_object_events, apply_tram_policy, objects_in_areas, objects_in_polygons, zone_areas, zone_polygon, zone_polygons
 
 
 def test_parse_camera_folder():
@@ -86,6 +88,59 @@ def test_tram_policy_uses_uncertainty_direction_and_fail_safe():
 
     no_position = apply_tram_policy([person], None, 2)[0]
     assert no_position["alert"] is False and no_position["alertReason"] == ""
+
+
+def test_object_events_track_warning_to_danger_and_suppress_repeats():
+    state = {}
+
+    def frame(level, alert):
+        return apply_object_events([{
+            "class": "person",
+            "confidence": 0.9,
+            "bbox": [10, 10, 30, 50],
+            "zoneLevel": level,
+            "zoneName": level,
+            "alert": alert,
+        }], state, np.zeros((100, 100, 3), np.uint8), max_distance=100)[0]
+
+    warning = frame("warning", True)
+    danger = frame("danger", True)
+    staying = frame("danger", True)
+    safe = frame("safe", False)
+
+    assert warning["alertEvent"] == "ENTER" and warning["alertNotify"] is True
+    assert danger["trackId"] == warning["trackId"]
+    assert danger["previousZoneLevel"] == "warning"
+    assert danger["zoneTransition"] == "WARNING_TO_DANGER"
+    assert danger["alertEvent"] == "ESCALATE" and danger["alertNotify"] is True
+    assert staying["alertEvent"] == "STAY" and staying["alertNotify"] is False
+    assert safe["alertEvent"] == "EXIT" and safe["alertNotify"] is True
+
+
+def test_multi_object_tracker_keeps_ids_when_people_cross():
+    state = {}
+
+    def frame(entries):
+        image = np.zeros((100, 120, 3), np.uint8)
+        objects = []
+        for name, x, color in entries:
+            image[10:70, x:x + 20] = color
+            objects.append({
+                "class": "person",
+                "confidence": 0.9,
+                "bbox": [x, 10, x + 20, 70],
+                "zoneLevel": "danger",
+                "zoneName": "danger",
+                "alert": True,
+                "name": name,
+            })
+        return {item["name"]: item["trackId"] for item in apply_object_events(objects, state, image, 60)}
+
+    first = frame([("red", 0, (0, 0, 255)), ("blue", 80, (255, 0, 0))])
+    frame([("red", 25, (0, 0, 255)), ("blue", 55, (255, 0, 0))])
+    crossed = frame([("blue", 20, (255, 0, 0)), ("red", 60, (0, 0, 255))])
+
+    assert crossed == first
 
 
 def test_list_cameras_and_latest_jpeg(tmp_path):

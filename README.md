@@ -34,10 +34,10 @@ CCTV 또는 백엔드 중계 영상을 입력받아 얼굴 비식별화, 객체 
 
 - Python 3.10 이상
 - NVIDIA GPU 및 CUDA
-- OpenCV, NumPy, PyTorch, ONNX Runtime GPU, Ultralytics, InsightFace
+- OpenCV, NumPy, PyTorch, ONNX Runtime GPU, Ultralytics, InsightFace, Norfair
 
 ```bash
-pip install opencv-python numpy torch onnxruntime-gpu ultralytics insightface pytest
+pip install opencv-python numpy torch onnxruntime-gpu ultralytics insightface norfair pytest
 ```
 
 전체 분석에는 다음 모델 파일이 필요하다.
@@ -143,6 +143,7 @@ docker build -t trem-object-ai .
 docker run --rm --gpus all \
   --name trem-object-ai \
   -p 8080:8080 \
+  -p 8765:8765 \
   --add-host host.docker.internal:host-gateway \
   -e OBJECT_DEVICE_ID=0 \
   -e OBJECT_RESULT_URL=http://host.docker.internal:3535/object/results \
@@ -286,7 +287,7 @@ python process_blur_anomalies.py \
 
 ## 카메라별 구역 설정
 
-`crowd_analysis_server.py`가 기동되면 구역 편집기도 함께 열린다. 브라우저에서 `http://localhost:8765`에 접속해 카메라 최신 분석 JPEG 위에 `danger`, `warning`, `safe` POLYGON과 객체 Zone 번호를 저장한다.
+`crowd_analysis_server.py`가 기동되면 구역 편집기도 함께 열린다. 브라우저에서 `http://localhost:8765`에 접속해 카메라 최신 분석 JPEG 위에 `danger`, `warning`, `safe` POLYGON과 객체 Zone 번호를 저장한다. Docker로 띄울 때는 `-p 8765:8765`로 외부에 연다.
 
 파일은 `/upload/visit_servant/zones/{장비ID}.json`이다. 분석 요청마다 `congestionSensorDeviceId`로 파일을 다시 읽는다. 중첩 POLYGON은 `danger > warning > safe` 순으로 판정하고, 지정 POLYGON 밖은 `safe-default`로 분류한다.
 

@@ -8,7 +8,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from queue import Queue
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import cv2
@@ -16,11 +16,12 @@ import cv2
 from camera_zones import load_zone_file, polygons_from_payload, zone_file
 from crowd_analysis_protocol import (
     AnalysisJob,
+    api_callback_payload,
     completed_payload,
     failed_payload,
     parse_analysis_body,
 )
-from frame_objects import YoloDnnDetector, apply_tram_policy
+from frame_objects import YoloDnnDetector, apply_object_events, apply_tram_policy
 from frame_faces import ScrfdFaceDetector
 from zone_annotator import start_annotator_thread
 
@@ -58,10 +59,16 @@ def post_json(url: str, payload: dict, api_key: str, timeout_s: float) -> None:
 
 def post_result_with_retry(url: str, payload: dict, api_key: str, attempts=5) -> None:
     last_error = None
+    body = api_callback_payload(payload)
     for attempt in range(attempts):
         try:
-            post_json(url, payload, api_key, timeout_s=10)
+            post_json(url, body, api_key, timeout_s=10)
             return
+        except HTTPError as error:
+            last_error = error
+            if 400 <= error.code < 500 and error.code != 408:
+                break
+            time.sleep(0.5 * (attempt + 1))
         except (URLError, TimeoutError, OSError) as error:
             last_error = error
             time.sleep(0.5 * (attempt + 1))
@@ -92,6 +99,7 @@ class AnalysisRuntime:
         self.zone_dir = zone_dir.resolve() if zone_dir else None
         self.ready = False
         self.jobs: Queue[AnalysisJob | None] = Queue()
+        self.object_states = {}
 
     def start(self):
         self.counter.load()
@@ -143,6 +151,13 @@ class AnalysisRuntime:
                         job.tram_zone,
                         threshold,
                         **job.tram_policy_options(),
+                    )
+                    stream = job.congestion_sensor_device_id or job.camera.get("id") or "default"
+                    objects = apply_object_events(
+                        objects,
+                        self.object_states.setdefault(stream, {}),
+                        frame,
+                        max(frame.shape[:2]) / 4,
                     )
                 except Exception as error:
                     print(f"object detect failed id={job.id} reason={error}", flush=True)
@@ -276,8 +291,11 @@ def main():
         f"analysis loading model={args.model} device={args.device} objects={args.object_model if object_detector else 'off'} faces={args.face_model if face_detector else 'off'} zones={zone_dir}",
         flush=True,
     )
-    runtime.start()
     start_annotator_thread(analyzed_dir, zone_dir, args.annotator_host, args.annotator_port)
+    try:
+        runtime.start()
+    except Exception as error:
+        print(f"analysis models failed reason={error}", flush=True)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(runtime))
     print(f"analysis listening http://{args.host}:{args.port}/crowd/analysis", flush=True)
     server.serve_forever()

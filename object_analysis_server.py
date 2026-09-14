@@ -10,7 +10,7 @@ import cv2
 
 from crowd_analysis_protocol import AnalysisJob, completed_object_payload, failed_payload
 from crowd_analysis_server import env_path, env_str, make_handler, post_result_with_retry
-from frame_objects import YoloDnnDetector, apply_tram_policy
+from frame_objects import YoloDnnDetector, apply_object_events, apply_tram_policy
 
 
 class ObjectAnalysisRuntime:
@@ -23,6 +23,7 @@ class ObjectAnalysisRuntime:
         self.result_sink = result_sink
         self.ready = False
         self.jobs: Queue[AnalysisJob | None] = Queue()
+        self.object_states = {}
 
     def start(self):
         self.detector.load()
@@ -51,6 +52,13 @@ class ObjectAnalysisRuntime:
                     job.tram_zone,
                     threshold,
                     **job.tram_policy_options(),
+                )
+                stream = job.congestion_sensor_device_id or job.camera.get("id") or "default"
+                objects = apply_object_events(
+                    objects,
+                    self.object_states.setdefault(stream, {}),
+                    frame,
+                    max(frame.shape[:2]) / 4,
                 )
                 payload = completed_object_payload(job, objects, (time.perf_counter() - started) * 1000)
             except Exception as error:

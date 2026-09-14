@@ -7,6 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import onnxruntime as ort
+from norfair import Detection, Tracker
 
 from anomaly_rules import point_in_polygon
 
@@ -155,6 +156,110 @@ def apply_tram_policy(
         else:
             item["alert"] = False
         enriched.append(item)
+    return enriched
+
+
+def _appearance(frame, bbox):
+    # ponytail: HSV avoids another GPU model; add learned ReID if site footage still shows ID switches.
+    height, width = frame.shape[:2]
+    x1, y1, x2, y2 = bbox
+    dx, dy = (x2 - x1) * 0.2, (y2 - y1) * 0.1
+    x1, x2 = max(0, int(x1 + dx)), min(width, int(x2 - dx))
+    y1, y2 = max(0, int(y1 + dy)), min(height, int(y2 - dy))
+    if x2 <= x1 or y2 <= y1:
+        return np.zeros(128, np.float32)
+    hsv = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+    histogram = cv2.calcHist([hsv], [0, 1], None, [16, 8], [0, 180, 0, 256]).reshape(-1)
+    norm = np.linalg.norm(histogram)
+    return histogram / norm if norm else histogram
+
+
+def _appearance_distance(first, second):
+    a, b = first.last_detection.embedding, second.last_detection.embedding
+    return 1.0 - float(np.clip(np.dot(a, b), 0, 1))
+
+
+def _tracking_distance(detection, tracked):
+    center = detection.points.mean(axis=0)
+    predicted = tracked.estimate.mean(axis=0)
+    spatial = float(np.linalg.norm(center - predicted)) / detection.data["maxDistance"]
+    if spatial > 1:
+        return 1.0
+    appearance = 1.0 - float(np.clip(np.dot(detection.embedding, tracked.last_detection.embedding), 0, 1))
+    return 0.45 * spatial + 0.55 * appearance
+
+
+def apply_object_events(objects, state, frame, max_distance, max_missed=30, reid_threshold=0.25):
+    """Track objects with motion and appearance, then emit alert state changes once."""
+    tracker = state.get("tracker")
+    if tracker is None:
+        tracker = state["tracker"] = Tracker(
+            distance_function=_tracking_distance,
+            distance_threshold=0.8,
+            hit_counter_max=max_missed,
+            initialization_delay=0,
+            reid_distance_function=_appearance_distance,
+            reid_distance_threshold=reid_threshold,
+            reid_hit_counter_max=max_missed * 2,
+        )
+    previous = state.setdefault("previous", {})
+    token = state["frame"] = state.get("frame", 0) + 1
+    detections = [
+        Detection(
+            points=np.asarray([item["bbox"][:2], item["bbox"][2:]], np.float32),
+            scores=np.asarray([item["confidence"]] * 2, np.float32),
+            data={"frame": token, "index": index, "item": item, "maxDistance": max_distance},
+            label=item["class"],
+            embedding=_appearance(frame, item["bbox"]),
+        )
+        for index, item in enumerate(objects)
+    ]
+    current_tracks = [
+        tracked for tracked in tracker.update(detections=detections)
+        if tracked.last_detection.data["frame"] == token
+    ]
+    current_tracks.sort(key=lambda tracked: tracked.last_detection.data["index"])
+    enriched = []
+    for tracked in current_tracks:
+        item = tracked.last_detection.data["item"]
+        track_id = tracked.id
+        old = previous.get(track_id)
+        old_zone = old["zoneLevel"] if old else None
+        zone = item.get("zoneLevel", "safe")
+        if old_zone == zone:
+            zone_transition = "NONE"
+        elif old_zone is None:
+            zone_transition = f"ENTER_{zone.upper()}" if zone in {"warning", "danger"} else "NONE"
+        else:
+            zone_transition = f"{old_zone.upper()}_TO_{zone.upper()}"
+
+        was_alert = bool(old and old["alert"])
+        is_alert = bool(item.get("alert"))
+        if is_alert and not was_alert:
+            alert_event = "ENTER"
+        elif is_alert and zone_transition == "WARNING_TO_DANGER":
+            alert_event = "ESCALATE"
+        elif is_alert:
+            alert_event = "STAY"
+        elif was_alert:
+            alert_event = "EXIT"
+        else:
+            alert_event = "NONE"
+
+        current = {
+            **item,
+            "trackId": track_id,
+            "previousZoneLevel": old_zone,
+            "zoneTransition": zone_transition,
+            "alertEvent": alert_event,
+            "alertNotify": alert_event in {"ENTER", "ESCALATE", "EXIT"},
+        }
+        previous[track_id] = {"zoneLevel": zone, "alert": is_alert}
+        enriched.append(current)
+
+    active_ids = {tracked.id for tracked in tracker.tracked_objects}
+    for track_id in set(previous) - active_ids:
+        del previous[track_id]
     return enriched
 
 

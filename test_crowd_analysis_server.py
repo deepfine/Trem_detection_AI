@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from camera_zones import save_zone_file
-from crowd_analysis_protocol import completed_payload, failed_payload, parse_analysis_body
+from crowd_analysis_protocol import api_callback_payload, completed_payload, failed_payload, parse_analysis_body
 from crowd_analysis_server import AnalysisRuntime, make_handler
 
 
@@ -138,6 +138,42 @@ def test_parse_rejects_path_outside_roots(tmp_path):
         assert "outside allowed roots" in str(error)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_api_callback_payload_strips_fields_unknown_to_backend():
+    payload = {
+        "id": 41,
+        "status": "COMPLETED",
+        "countedPeople": 12,
+        "alertEventCount": 1,
+        "objects": [
+            {
+                "class": "person",
+                "confidence": 0.9,
+                "bbox": [1, 2, 3, 4],
+                "zoneLevel": "danger",
+                "zoneIndex": 1,
+                "alert": True,
+                "trackId": 7,
+                "alertEvent": "ENTER",
+                "alertNotify": True,
+            }
+        ],
+        "faces": [{"confidence": 0.8, "bbox": [1, 2, 3, 4], "extra": True}],
+        "raw": {"alertEventCount": 1},
+    }
+    body = api_callback_payload(payload)
+    assert "alertEventCount" not in body
+    assert body["objects"][0] == {
+        "class": "person",
+        "confidence": 0.9,
+        "bbox": [1, 2, 3, 4],
+        "zoneLevel": "danger",
+        "zoneIndex": 1,
+        "alert": True,
+    }
+    assert body["faces"][0] == {"confidence": 0.8, "bbox": [1, 2, 3, 4]}
+    assert body["raw"] == {"alertEventCount": 1}
 
 
 def test_completed_payload_matches_api_contract():
@@ -276,8 +312,12 @@ def test_http_includes_object_detections(tmp_path):
     assert posted[0]["objects"][0]["class"] == "person"
     assert posted[0]["objects"][0]["zoneGap"] == 2
     assert posted[0]["objects"][0]["alert"] is True
+    assert posted[0]["objects"][0]["trackId"] == 1
+    assert posted[0]["objects"][0]["alertEvent"] == "ENTER"
+    assert posted[0]["objects"][0]["alertNotify"] is True
     assert posted[0]["alertLevel"] == "danger"
     assert posted[0]["alertObjectCount"] == 1
+    assert posted[0]["alertEventCount"] == 1
     assert posted[0]["raw"]["object_ms"] == 8.5
 
 

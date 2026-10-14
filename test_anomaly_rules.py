@@ -1,4 +1,4 @@
-from anomaly_rules import average_delta, classify_event, direction_vector, entered_zone, point_in_polygon, sample_due
+from anomaly_rules import ANIMAL_CLASSES, average_delta, classify_event, direction_vector, entered_zone, normalize_class, point_in_polygon, sample_due
 
 
 ZONE = [(0, 0), (100, 0), (100, 100), (0, 100)]
@@ -19,6 +19,22 @@ def test_fast_incoming_outside_zone_event():
 
 def test_fast_incoming_ignores_non_obstacle_classes():
     assert classify_event("chair", (200, 80, 240, 120), [(220, 20), (220, 120)], ZONE, direction_vector("down"), 25, 650, 0.75) == ""
+
+
+def test_table_targets_apply_to_zone_and_incoming_events():
+    for label in ("animal", "cat", "dog", "bird", "rabbit", "scooter", "wheelchair"):
+        assert classify_event(label, (10, 10, 30, 30), [], ZONE, direction_vector("down"), 25, 650, 0.75) == "masked_zone_obstacle"
+    for label in ("car", "bus", "truck", "cart", "backpack", "suitcase"):
+        assert classify_event(label, (10, 10, 30, 30), [], ZONE, direction_vector("down"), 25, 650, 0.75) == ""
+        assert classify_event(label, (200, 80, 240, 120), [(220, 20), (220, 120)], ZONE, direction_vector("down"), 25, 650, 0.75) == ""
+
+
+def test_animal_labels_are_normalized_without_changing_people_or_vehicles():
+    assert {normalize_class(label) for label in ANIMAL_CLASSES} == {"animal"}
+    for label in ("person", "bicycle", "motorcycle", "scooter", "wheelchair", "animal"):
+        assert normalize_class(label) == label
+    assert normalize_class("hot dog") == "hot dog"
+    assert normalize_class("teddy bear") == "teddy bear"
 
 
 def test_average_delta_uses_history_span():

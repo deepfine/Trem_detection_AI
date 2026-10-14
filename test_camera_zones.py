@@ -117,6 +117,20 @@ def test_object_events_track_warning_to_danger_and_suppress_repeats():
     assert safe["alertEvent"] == "EXIT" and safe["alertNotify"] is True
 
 
+def test_stay_keeps_same_id_for_300_seconds_at_four_fps():
+    state = {}
+    image = np.zeros((100, 100, 3), np.uint8)
+    objects = [{"class": "person", "confidence": 0.9, "bbox": [10, 10, 30, 50], "zoneLevel": "danger", "alert": True}]
+    first = apply_object_events(objects, state, image, 100)[0]
+    assert first["alertEvent"] == "ENTER"
+    # 1,200 subsequent samples represent 300 seconds at 4 FPS, without sleeping.
+    for _ in range(300 * 4):
+        item = apply_object_events(objects, state, image, 100)[0]
+        assert item["trackId"] == first["trackId"]
+        assert item["alertEvent"] == "STAY"
+        assert item["alertNotify"] is False
+
+
 def test_multi_object_tracker_keeps_ids_when_people_cross():
     state = {}
 

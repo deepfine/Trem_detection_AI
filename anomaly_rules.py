@@ -3,7 +3,21 @@ from __future__ import annotations
 import math
 
 
-OBSTACLE_CLASSES = {"person", "bicycle", "motorcycle", "car", "truck", "bus", "cat", "dog", "horse"}
+ANIMAL_CLASSES = {
+    "cat", "dog", "bird", "horse", "sheep", "cow", "elephant", "bear",
+    "zebra", "giraffe", "duck", "pigeon", "goose", "deer", "chicken",
+    "penguin", "swan", "camel", "antelope", "pig", "donkey", "parrot",
+    "llama", "yak", "lion", "polar bear", "seal", "eagle", "monkey",
+    "rabbit", "tortoise/turtle", "wild bird", "fish", "goldfish", "shrimp",
+    "jellyfish", "butterfly", "dolphin", "shark", "crab", "scallop",
+    "starfish", "lobster",
+}
+OBSTACLE_CLASSES = {"person", "bicycle", "motorcycle", "scooter", "wheelchair", "animal"}
+
+
+def normalize_class(label):
+    label = label.lower()
+    return "animal" if label in ANIMAL_CLASSES else label
 
 
 def sample_due(source_frame, source_fps, next_sample_seconds):
@@ -63,6 +77,7 @@ def entered_zone(points, zone):
 
 
 def classify_event(label, box, points, zone, direction, fps, min_speed, min_alignment, entry_only=False):
+    label = normalize_class(label)
     current_center = center(box)
     in_zone = point_in_polygon(current_center, zone) if zone else False
     if in_zone and label in OBSTACLE_CLASSES:

@@ -183,6 +183,7 @@ CALLBACK_BODY_KEYS = (
     "objects",
     "alertLevel",
     "alertObjectCount",
+    "alertEventCount",
     "detectedFaceCount",
     "faces",
     "raw",
@@ -202,6 +203,11 @@ CALLBACK_OBJECT_KEYS = (
     "zoneGapThreshold",
     "alert",
     "alertReason",
+    "trackId",
+    "previousZoneLevel",
+    "zoneTransition",
+    "alertEvent",
+    "alertNotify",
 )
 CALLBACK_FACE_KEYS = ("confidence", "bbox")
 

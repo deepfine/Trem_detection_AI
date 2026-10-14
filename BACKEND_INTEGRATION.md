@@ -103,7 +103,7 @@ Content-Type: application/json
   "forwardZoneGapThreshold": 3,
   "rearZoneGapThreshold": 1,
   "failSafeOnMissingTramPosition": true,
-  "targetClasses": ["person", "bicycle", "motorcycle", "scooter", "wheelchair", "cart"],
+  "targetClasses": ["person", "bicycle", "motorcycle", "scooter", "wheelchair", "animal"],
   "zone": {
     "width": 1280,
     "height": 720,
@@ -132,7 +132,7 @@ Content-Type: application/json
 | `congestionSensorDeviceId` | 권장 | 카메라·센서 식별자 |
 | `frame_abs_path` 또는 `frame_path` | 필수 | AI 컨테이너에서도 접근 가능한 JPEG 경로 |
 | `zone` | 객체 전용 endpoint에서 필수 | 영역 좌표 JSON. 미전달 시 요청은 접수되지만 객체 결과는 비어 있음 |
-| `targetClasses` | 선택 | 생략 시 서버 기본 검출 클래스 사용 |
+| `targetClasses` | 선택 | 생략 시 사람·자전거·오토바이·킥보드·휠체어·동물 사용. 지정 시 기본 대상 중 선택하며 차량·카트·가방은 제외 |
 | `tramZone` | 접근 판정 시 필수 | 현재 트램 Zone 번호 |
 | `tramDirection` | 선택 | Zone 번호 증가 방향 `1`, 감소 방향 `-1`, 방향 미적용 `0` |
 | `tramZoneUncertainty` | 선택 | 트램 Zone 후보 범위, 기본값 `0` |
@@ -141,6 +141,8 @@ Content-Type: application/json
 | `forwardZoneGapThreshold` | 선택 | 진행 방향 허용 Zone 간격 |
 | `rearZoneGapThreshold` | 선택 | 후방 허용 Zone 간격 |
 | `failSafeOnMissingTramPosition` | 선택 | `tramZone` 누락 시 사람 알림 유지 여부, 기본값 `false` |
+
+사람의 class는 성인·아동·교통약자 구분 없이 `person`을 유지한다. 기존 영상 처리 경로의 유형 추정 결과는 서버 응답에 포함되지 않는다. 동물은 종류와 관계없이 `animal`로 반환한다. 킥보드는 보조 모델의 `scooter` 검출을 사용하며, 탑승자만 `person`으로 검출될 수 있다. 세부 대상 목록은 `anomaly_rules.py`의 `ANIMAL_CLASSES` 및 `OBSTACLE_CLASSES`를 기준으로 한다.
 
 정상 요청은 다음 응답을 즉시 반환한다.
 
@@ -307,6 +309,10 @@ else:
     alertEvent가 EXIT이면 기존 알림 해제
     나머지는 신규 또는 격상 알림 전송
 ```
+
+callback에는 `trackId`, `previousZoneLevel`, `zoneTransition`, `alertEvent`, `alertNotify` 및 최상위 `alertEventCount`를 포함한다. 수신 API의 타입과 생성 라우트에서 해당 필드 수용을 확인하였다.
+
+동일 객체가 계속 검출되고 경보 조건을 충족하면 `STAY`를 유지한다. 체류시간에 대한 10초 제한은 없으며 300초 이후에도 유지 가능하다. 4 FPS 기준 1,201회 연속 합성 검출로 300초 구간의 동일 ID와 `STAY` 유지를 검증하였다. 실제 영상에서의 가림·ID 전환에 대한 검증은 별도 수행이 필요하다. 미검출 추적 보관시간과 체류시간은 서로 다른 조건이다.
 
 `alert`는 현재 프레임의 경보 상태이므로 객체가 위험 범위에 머무르는 동안 `true`를 유지한다. `alertNotify`는 `ENTER`, `ESCALATE`, `EXIT` 시점에만 `true`이므로 신규 알림의 반복 전송을 억제한다. `WARNING_TO_DANGER` 전이 중 기존 알림이 유지되는 경우 `alertEvent=ESCALATE`를 산출한다.
 

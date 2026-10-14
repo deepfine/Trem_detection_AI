@@ -10,7 +10,7 @@ import numpy as np
 
 from camera_zones import save_zone_file
 from crowd_analysis_protocol import api_callback_payload, completed_payload, failed_payload, parse_analysis_body
-from crowd_analysis_server import AnalysisRuntime, make_handler
+from crowd_analysis_server import AnalysisRuntime, make_handler, post_result_with_retry
 
 
 class FakeCounter:
@@ -140,7 +140,7 @@ def test_parse_rejects_path_outside_roots(tmp_path):
         raise AssertionError("expected ValueError")
 
 
-def test_api_callback_payload_strips_fields_unknown_to_backend():
+def test_api_callback_payload_preserves_events_and_strips_unknown_fields():
     payload = {
         "id": 41,
         "status": "COMPLETED",
@@ -155,15 +155,18 @@ def test_api_callback_payload_strips_fields_unknown_to_backend():
                 "zoneIndex": 1,
                 "alert": True,
                 "trackId": 7,
+                "previousZoneLevel": None,
+                "zoneTransition": "ENTER_DANGER",
                 "alertEvent": "ENTER",
                 "alertNotify": True,
+                "extra": True,
             }
         ],
         "faces": [{"confidence": 0.8, "bbox": [1, 2, 3, 4], "extra": True}],
         "raw": {"alertEventCount": 1},
     }
     body = api_callback_payload(payload)
-    assert "alertEventCount" not in body
+    assert body["alertEventCount"] == 1
     assert body["objects"][0] == {
         "class": "person",
         "confidence": 0.9,
@@ -171,9 +174,30 @@ def test_api_callback_payload_strips_fields_unknown_to_backend():
         "zoneLevel": "danger",
         "zoneIndex": 1,
         "alert": True,
+        "trackId": 7,
+        "previousZoneLevel": None,
+        "zoneTransition": "ENTER_DANGER",
+        "alertEvent": "ENTER",
+        "alertNotify": True,
     }
     assert body["faces"][0] == {"confidence": 0.8, "bbox": [1, 2, 3, 4]}
     assert body["raw"] == {"alertEventCount": 1}
+
+
+def test_callback_posts_all_alert_states(monkeypatch):
+    posted = []
+    monkeypatch.setattr("crowd_analysis_server.post_json", lambda url, body, key, timeout_s: posted.append(body))
+    for event in ("ENTER", "STAY", "ESCALATE", "EXIT", "NONE"):
+        notify = event in {"ENTER", "ESCALATE", "EXIT"}
+        post_result_with_retry("http://example.test/crowd/results", {
+            "id": 1,
+            "status": "COMPLETED",
+            "objects": [{"class": "person", "trackId": 7, "alertEvent": event, "alertNotify": notify}],
+            "alertEventCount": int(notify),
+        }, "")
+    assert [body["objects"][0]["alertEvent"] for body in posted] == ["ENTER", "STAY", "ESCALATE", "EXIT", "NONE"]
+    assert [body["alertEventCount"] for body in posted] == [1, 0, 1, 1, 0]
+    assert all(body["objects"][0]["trackId"] == 7 for body in posted)
 
 
 def test_completed_payload_matches_api_contract():

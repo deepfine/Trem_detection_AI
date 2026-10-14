@@ -13,7 +13,7 @@ import numpy as np
 import torch
 import onnxruntime as ort
 
-from anomaly_rules import OBSTACLE_CLASSES
+from anomaly_rules import OBSTACLE_CLASSES, normalize_class
 from detect_anomalies import COCO
 from process_blur_anomalies import yolo_ort_detections
 
@@ -45,7 +45,7 @@ def yolo26_detections(session, frame, size, conf_threshold, nms_threshold):
     keep = cv2.dnn.NMSBoxes(boxes, scores, conf_threshold, nms_threshold)
     for i in np.array(keep).reshape(-1) if len(keep) else []:
         x, y, w, h = boxes[i]
-        yield COCO[class_ids[i]], scores[i], (x, y, x + w, y + h)
+        yield normalize_class(COCO[class_ids[i]]), scores[i], (x, y, x + w, y + h)
 
 
 def target_only(detections):

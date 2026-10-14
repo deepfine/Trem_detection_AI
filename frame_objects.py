@@ -9,22 +9,10 @@ import numpy as np
 import onnxruntime as ort
 from norfair import Detection, Tracker
 
-from anomaly_rules import point_in_polygon
+from anomaly_rules import OBSTACLE_CLASSES, normalize_class, point_in_polygon
 
 
-DEFAULT_TARGET_CLASSES = {
-    "person",
-    "bicycle",
-    "motorcycle",
-    "scooter",
-    "wheelchair",
-    "cart",
-    "car",
-    "bus",
-    "truck",
-    "backpack",
-    "suitcase",
-}
+DEFAULT_TARGET_CLASSES = OBSTACLE_CLASSES
 ZONE_PRIORITY = {"safe": 0, "warning": 1, "danger": 2}
 CLASS_ALIASES = {
     "bike": "bicycle",
@@ -92,9 +80,11 @@ def objects_in_polygons(detections, polygons, target_classes):
 def objects_in_areas(detections, areas, target_classes, include_outside=False):
     if not areas:
         return []
+    target_classes = {normalize_class(label) for label in target_classes}
     objects = []
     for label, confidence, (x1, y1, x2, y2) in detections:
-        if label not in target_classes:
+        label = normalize_class(label)
+        if label not in DEFAULT_TARGET_CLASSES or label not in target_classes:
             continue
         foot = ((x1 + x2) / 2, y2)
         matches = [area for area in areas if point_in_polygon(foot, area["points"])]
@@ -304,7 +294,7 @@ class YoloDnnDetector:
             output = session.run(None, {session.get_inputs()[0].name: image})[0][0]
             if end2end:
                 for x1, y1, x2, y2, score, class_id in output:
-                    label = CLASS_ALIASES.get(names[int(class_id)].lower(), names[int(class_id)].lower())
+                    label = normalize_class(CLASS_ALIASES.get(names[int(class_id)].lower(), names[int(class_id)].lower()))
                     if score >= self.confidence and (allowed is None or label in allowed):
                         yield label, float(score), (
                             int(x1 * width / self.size), int(y1 * height / self.size),
@@ -315,7 +305,7 @@ class YoloDnnDetector:
             for row in output.T if output.shape[0] == 4 + len(names) else output:
                 class_id = int(np.argmax(row[4:]))
                 score = float(row[4 + class_id])
-                label = CLASS_ALIASES.get(names[class_id].lower(), names[class_id].lower())
+                label = normalize_class(CLASS_ALIASES.get(names[class_id].lower(), names[class_id].lower()))
                 if score < self.confidence or (allowed is not None and label not in allowed):
                     continue
                 x, y, w, h = row[:4]
@@ -326,7 +316,7 @@ class YoloDnnDetector:
             keep = cv2.dnn.NMSBoxes(boxes, scores, self.confidence, self.nms)
             for index in np.array(keep).reshape(-1) if len(keep) else []:
                 x, y, w, h = boxes[index]
-                label = CLASS_ALIASES.get(names[class_ids[index]].lower(), names[class_ids[index]].lower())
+                label = normalize_class(CLASS_ALIASES.get(names[class_ids[index]].lower(), names[class_ids[index]].lower()))
                 yield label, scores[index], (x, y, x + w, y + h)
 
     def detect(self, frame, zone=None, target_classes=()):

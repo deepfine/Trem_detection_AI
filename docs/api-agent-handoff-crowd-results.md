@@ -1,5 +1,7 @@
 # API 스키마 확장 요청 — `POST /crowd/results`
 
+> 2026-10-14 확인: 수신 API 타입과 생성 라우트에 추적·상태 필드 및 `alertEventCount`가 반영되어 있다. 분석 서버 callback 필터도 해당 필드를 유지하도록 수정하였다. 아래 422 증상과 확장 요청은 이전 상태의 기록이다.
+
 분석 서버(Trem Detection AI)가 이미 보내는 필드를 백엔드가 거절하고 있습니다. **분석은 성공하는데 callback이 422라서 결과가 저장되지 않고, 백엔드는 TIMEOUT으로 표시됩니다.**
 
 대상 레포: `visit_servant_api`  

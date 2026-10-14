@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 
-from anomaly_rules import OBSTACLE_CLASSES, average_delta, center, classify_event, direction_vector, point_in_polygon, sample_due
+from anomaly_rules import OBSTACLE_CLASSES, average_delta, center, classify_event, direction_vector, normalize_class, point_in_polygon, sample_due
 from blur_tracking import iou, keep_recent_boxes
 from blur_video_yunet import blur_boxes
 from detect_anomalies import COCO, load_zone, track, yolo_detections
@@ -50,7 +50,7 @@ def yolo_ort_detections(session, frame, size, conf_threshold, nms_threshold):
     keep = cv2.dnn.NMSBoxes(boxes, scores, conf_threshold, nms_threshold)
     for i in np.array(keep).reshape(-1) if len(keep) else []:
         x, y, w, h = boxes[i]
-        yield COCO[class_ids[i]], scores[i], (x, y, x + w, y + h)
+        yield normalize_class(COCO[class_ids[i]]), scores[i], (x, y, x + w, y + h)
 
 
 def assistive_detections(model, frame, device_id, size, confidence):

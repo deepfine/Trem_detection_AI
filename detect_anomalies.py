@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from anomaly_rules import classify_event, direction_vector, point_in_polygon
+from anomaly_rules import classify_event, direction_vector, normalize_class, point_in_polygon
 
 
 COCO = [
@@ -57,7 +57,7 @@ def yolo_detections(net, frame, size, conf_threshold, nms_threshold):
     keep = cv2.dnn.NMSBoxes(boxes, scores, conf_threshold, nms_threshold)
     for i in np.array(keep).reshape(-1) if len(keep) else []:
         x, y, w, h = boxes[i]
-        yield COCO[class_ids[i]], scores[i], (x, y, x + w, y + h)
+        yield normalize_class(COCO[class_ids[i]]), scores[i], (x, y, x + w, y + h)
 
 
 def track(detections, tracks, max_distance, history_size, max_missed=10):

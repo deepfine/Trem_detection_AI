@@ -51,14 +51,24 @@ result/models/dm_count_qnrf.pth
 
 모델 파일은 용량 때문에 Git 저장 대상에서 제외하였다.
 
-객체 탐지는 다음 클래스를 기본 지원한다.
+객체 분석의 기본 대상은 사람, 자전거, 오토바이, 킥보드 및 동물이다. 휠체어는 교통약자 유형 판정을 위한 보조 객체로 포함한다.
 
-```text
-person, bicycle, motorcycle, scooter, wheelchair, cart,
-car, bus, truck, backpack, suitcase
-```
+| 객체 유형 | 세부 객체 | 결과 class | 비고 |
+| --- | --- | --- | --- |
+| 사람 | 성인 | `person` | 사람 검출 가능 |
+| 사람 | 교통약자 | `person` | `person` 유지. 기존 영상 처리 경로에서 이동보조기기 연관 기반 유형 추정 가능 |
+| 사람 | 아동 | `person` | `person` 유지. 기존 영상 처리 경로에서 원근·신장 기반 유형 추정 가능 |
+| 이동수단 | 자전거 | `bicycle` | 검출 가능 |
+| 이동수단 | 오토바이 | `motorcycle` | 검출 가능 |
+| 이동수단 | 킥보드 | `scooter` | 이동수단 보조 모델 사용. 탑승자만 `person`으로 검출될 수 있음 |
+| 동물 | 고양이, 강아지 등 | `animal` | 모델에서 검출한 동물 종류를 단일 class로 통합 |
+| 기타 | 승용차, 버스, 트럭 | `car`, `bus`, `truck` | 분류 판정에서 제외. `targetClasses`로 요청해도 결과에서 제외 |
 
-Objects365 모델의 `trolley`, `rickshaw`, `carriage`는 결과 JSON에서 `cart`로 통합한다. 이동수단 모델은 `Bike`, `Pedestrian`, `Scooter`, `Wheelchair` 중 Objects365에서 누락된 `scooter`, `wheelchair` 검출을 보강한다. 가중치와 Ultralytics 런타임을 서비스에 배포할 때에는 AGPL-3.0 또는 별도 상용 라이선스 조건을 확인한다.
+동물 대상은 `anomaly_rules.py`의 `ANIMAL_CLASSES`에 정의한다. 기본 대상에서 카트·가방·여행가방도 제외한다. `targetClasses`는 기본 대상 중 분석할 클래스를 선택하며, 생략 시 전체 기본 대상을 사용한다. 모델의 동물 종류별 라벨은 모두 `animal`로 통합한다. `targetClasses`에는 `animal`을 지정한다.
+
+사람의 검출 class는 유형 추정과 관계없이 `person`을 유지한다. 아동·성인·이동보조기기 사용자 추정은 `process_blur_anomalies.py`의 기존 `person_group` 출력이며, 서버 객체 응답에는 아직 포함되지 않는다. 추정 근거가 부족하면 `person_uncertain`을 유지한다.
+
+이동수단 모델은 `Bike`, `Pedestrian`, `Scooter`, `Wheelchair` 중 `scooter`, `wheelchair` 검출을 보강한다. 가중치와 Ultralytics 런타임을 서비스에 배포할 때에는 AGPL-3.0 또는 별도 상용 라이선스 조건을 확인한다.
 
 ```bash
 curl -L --fail -o yolo26n-objv1-150.pt \
@@ -187,7 +197,7 @@ docker run --rm --gpus all \
       }
     ]
   },
-  "targetClasses": ["person", "bicycle", "motorcycle", "scooter", "wheelchair", "cart"]
+  "targetClasses": ["person", "bicycle", "motorcycle", "scooter", "wheelchair", "animal"]
 }
 ```
 

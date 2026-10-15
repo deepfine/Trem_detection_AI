@@ -339,6 +339,8 @@ callback에는 `trackId`, `previousZoneLevel`, `zoneTransition`, `alertEvent`, `
 
 ## 쓰러짐 의심 결과
 
+변경 내역과 배포·검증 절차는 [쓰러짐 인수인계 문서](docs/fall-alert-handoff.md)를 참조한다.
+
 사람 class는 `person`으로 유지하고 다음 선택 필드를 추가한다. 기존 `alertEvent`는 구역 상황, `fallEvent`는 쓰러짐 상황으로 구분한다.
 
 | 필드 | 값과 의미 |

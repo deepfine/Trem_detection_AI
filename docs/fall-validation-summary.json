@@ -1,0 +1,38 @@
+{
+  "mode": "offline replay using source timestamps, NOT a live FPS benchmark",
+  "source": "/app/test_video.mkv",
+  "source_sha256": "ed81c1b090e8c183759d1740fa5ba14ac43bb316365d62d15cbf6bf60314e034",
+  "source_fps": 25.0,
+  "source_frames": 1933,
+  "source_size": [
+    1920,
+    1080
+  ],
+  "replay_sample_fps": 4,
+  "processed_samples": 310,
+  "last_source_seconds": 77.24,
+  "object_records": 1357,
+  "distinct_person_track_ids": 76,
+  "person_fall_state_counts": {
+    "NORMAL": 1238,
+    "UNKNOWN": 105
+  },
+  "person_fall_event_counts": {
+    "NONE": 1343
+  },
+  "offline_decode_detection_tracking_serialization_ms": {
+    "mean": 28.442928257995405,
+    "p95": 41.56770980061992
+  },
+  "fall_ground_truth": null,
+  "accuracy": "not measured; no reviewed fall ground truth",
+  "video_records": "annotated.mp4 is rendered from the same objects written to objects.jsonl",
+  "verification": {
+    "python_tests_passed": 82,
+    "backend_tests_passed": 33,
+    "video_frames": 310,
+    "video_fps": 4.0,
+    "record_count_matches_video": true,
+    "fixed_bug": "briefly clipped active fall no longer emits a false EXIT when the same wide box returns"
+  }
+}

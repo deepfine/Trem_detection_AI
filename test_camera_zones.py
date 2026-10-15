@@ -11,7 +11,7 @@ from camera_zones import (
     zones_from_payload,
     zone_file,
 )
-from frame_objects import apply_object_events, apply_tram_policy, objects_in_areas, objects_in_polygons, zone_areas, zone_polygon, zone_polygons
+from frame_objects import apply_object_events, apply_tram_policy, objects_in_areas, objects_in_polygons, zone_areas, zone_polygon, zone_polygons, zone_situation_event
 
 
 def test_parse_camera_folder():
@@ -115,6 +115,38 @@ def test_object_events_track_warning_to_danger_and_suppress_repeats():
     assert danger["alertEvent"] == "ESCALATE" and danger["alertNotify"] is True
     assert staying["alertEvent"] == "STAY" and staying["alertNotify"] is False
     assert safe["alertEvent"] == "EXIT" and safe["alertNotify"] is True
+
+
+def test_zone_situation_is_delivered_without_tram_alert():
+    assert zone_situation_event(None, "danger", "ENTER_DANGER") == "ENTER"
+    assert zone_situation_event("safe", "warning", "SAFE_TO_WARNING") == "ENTER"
+    assert zone_situation_event("warning", "danger", "WARNING_TO_DANGER") == "ESCALATE"
+    assert zone_situation_event("danger", "danger", "NONE") == "STAY"
+    assert zone_situation_event("danger", "warning", "DANGER_TO_WARNING") == "STAY"
+    assert zone_situation_event("danger", "safe", "DANGER_TO_SAFE") == "EXIT"
+    assert zone_situation_event("safe", "safe", "NONE") == "NONE"
+    assert zone_situation_event(None, "safe", "NONE") == "NONE"
+
+    state = {}
+
+    def frame(level):
+        return apply_object_events([{
+            "class": "person",
+            "confidence": 0.9,
+            "bbox": [10, 10, 30, 50],
+            "zoneLevel": level,
+            "zoneName": level,
+            "alert": False,
+            "alertReason": "",
+        }], state, np.zeros((100, 100, 3), np.uint8), max_distance=100)[0]
+
+    entered = frame("danger")
+    staying = frame("danger")
+    left = frame("safe")
+    assert entered["alert"] is False
+    assert entered["alertEvent"] == "ENTER" and entered["alertNotify"] is True
+    assert staying["alertEvent"] == "STAY" and staying["alertNotify"] is False
+    assert left["alertEvent"] == "EXIT" and left["alertNotify"] is True
 
 
 def test_stay_keeps_same_id_for_300_seconds_at_four_fps():

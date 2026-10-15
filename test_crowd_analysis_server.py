@@ -372,7 +372,7 @@ def test_http_includes_face_coordinates(tmp_path):
     assert posted[0]["raw"]["face_ms"] >= 0
 
 
-def test_http_skips_objects_when_zone_file_missing(tmp_path):
+def test_http_analyzes_objects_without_zone_for_fall_detection(tmp_path):
     frame = tmp_path / "27_1" / "a.jpg"
     write_jpeg(frame)
     posted = []
@@ -400,5 +400,6 @@ def test_http_skips_objects_when_zone_file_missing(tmp_path):
         )
     )
     runtime.jobs.join()
-    assert posted[0]["detectedObjectCount"] == 0
-    assert posted[0]["objects"] == []
+    assert posted[0]["detectedObjectCount"] == 1
+    assert posted[0]["objects"][0]["fallEvent"] == "NONE"
+    assert posted[0]["objects"][0]["alert"] is False

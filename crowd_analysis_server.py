@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 import cv2
 
-from camera_zones import load_zone_file, polygons_from_payload, zone_file
+from camera_zones import load_zone_file, zone_file
 from crowd_analysis_protocol import (
     AnalysisJob,
     api_callback_payload,
@@ -136,14 +136,14 @@ class AnalysisRuntime:
                 zone = load_zone_file(zone_file(self.zone_dir, job.congestion_sensor_device_id))
             if zone is None:
                 zone = job.zone
-            if self.object_detector is not None and zone and polygons_from_payload(zone):
+            if self.object_detector is not None:
                 try:
                     objects, object_ms = self.object_detector.detect(
                         frame,
                         zone,
                         job.target_classes,
                     )
-                    threshold = zone.get("zoneGapThreshold", 2)
+                    threshold = zone.get("zoneGapThreshold", 2) if zone else 2
                     if not isinstance(threshold, int) or isinstance(threshold, bool) or threshold < 0:
                         threshold = 2
                     objects = apply_tram_policy(
@@ -219,7 +219,8 @@ def make_handler(runtime: AnalysisRuntime, analysis_path="/crowd/analysis"):
                 if not runtime.ready:
                     self._send(503, json.dumps({"ok": False, "reason": "model not loaded"}).encode())
                     return
-                self._send(200, json.dumps({"ok": True, "model_loaded": True}).encode())
+                detector = getattr(runtime, "object_detector", None) or getattr(runtime, "detector", None)
+                self._send(200, json.dumps({"ok": True, "model_loaded": True, "fall_detection_enabled": detector is not None, "fall_detection_method": "bbox_dwell"}).encode())
                 return
             self._send(404, json.dumps({"ok": False, "reason": "not found"}).encode())
 

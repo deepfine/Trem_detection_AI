@@ -75,11 +75,11 @@
 
 | 값 | 언제 | `alertNotify` |
 | --- | --- | --- |
-| `ENTER` | 알림 꺼짐 → 켜짐 | `true` |
-| `ESCALATE` | 알림 유지 + `WARNING_TO_DANGER` | `true` |
-| `STAY` | 알림 유지 (같은 단계) | `false` |
-| `EXIT` | 알림 켜짐 → 꺼짐 | `true` |
-| `NONE` | 알림 없음 유지 | `false` |
+| `ENTER` | 안전 또는 미추적 → `warning`/`danger` | `true` |
+| `ESCALATE` | `warning` → `danger` | `true` |
+| `STAY` | `warning`/`danger` 유지, 또는 `danger` → `warning` | `false` |
+| `EXIT` | `warning`/`danger` → `safe` | `true` |
+| `NONE` | `safe` 유지 | `false` |
 
 알림 최종 신호는 기존처럼 `alert`입니다. `alertNotify`는 **이번 프레임에 사용자 알림을 새로 보낼지**입니다.
 

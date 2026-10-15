@@ -84,6 +84,14 @@ PY
 mv yolo26n-objv1-150.onnx result/models/objects365_yolo26n.onnx
 ```
 
+## 쓰러짐 의심 판정
+
+추가 자세 모델 없이 기존 `person` 박스와 추적 ID를 사용한다. 같은 위치에 10초 이상 머물고 현재 박스의 가로/세로 비율이 1.2 이상이면 `FALL_SUSPECTED`로 판정한다. 기준은 `frame_falls.py`의 `FALL_DWELL_SECONDS`, `FALL_BOX_RATIO`이다. 장기체류 기준과 300초 이상 동일 ID 유지 기능은 별개이다.
+
+위치는 박스 하단 중앙을 기준으로 하며 체류 시작 박스 높이의 절반(최소 10px)을 벗어나면 시간을 다시 누적한다. 검출 간격이 1초를 넘거나 박스가 잘리면 체류 시간을 초기화한다. 같은 위치에 계속 머문 상태에서 박스가 가로로 길어지면 다시 10초를 기다리지 않는다. 박스가 정상 비율로 돌아오거나 이동해 조건을 벗어나면 해제한다. 잘린 박스만으로 활성 경보를 해제하지 않는다.
+
+쓰러짐 의심은 트램 거리·구역과 관계없이 `alert=true`, `alertReason=PERSON_FALL_SUSPECTED`를 산출한다. 기존 구역 `alertEvent`와 별도로 `fallEvent`를 전달한다. `/health`에서 `fall_detection_method=bbox_dwell`을 확인한다. 눕기·숙이기·사람 간 박스 병합을 실제 쓰러짐과 구분하는 정확도 검증은 필요하다.
+
 ## DM-Count 가중치
 
 참고 구현과 동일한 UCF-QNRF 가중치를 내려받고 SHA-256을 검증한다.

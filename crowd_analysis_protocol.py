@@ -167,7 +167,7 @@ def parse_analysis_body(payload, analyzed_dir: Path, allowed_roots: list[Path]) 
 
 def alert_summary(objects):
     alerted = [item for item in objects if item.get("alert")]
-    level = "danger" if any(item.get("zoneLevel") == "danger" for item in alerted) else "warning" if alerted else None
+    level = "danger" if any(item.get("zoneLevel") == "danger" or item.get("fallState") == "FALL_SUSPECTED" for item in alerted) else "warning" if alerted else None
     return level, len(alerted)
 
 
@@ -208,6 +208,9 @@ CALLBACK_OBJECT_KEYS = (
     "zoneTransition",
     "alertEvent",
     "alertNotify",
+    "fallState",
+    "fallEvent",
+    "fallNotify",
 )
 CALLBACK_FACE_KEYS = ("confidence", "bbox")
 

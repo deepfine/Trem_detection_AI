@@ -10,6 +10,7 @@ import onnxruntime as ort
 from norfair import Detection, Tracker
 
 from anomaly_rules import OBSTACLE_CLASSES, normalize_class, point_in_polygon
+from frame_falls import update_fall_state
 
 
 DEFAULT_TARGET_CLASSES = OBSTACLE_CLASSES
@@ -179,8 +180,24 @@ def _tracking_distance(detection, tracked):
     return 0.45 * spatial + 0.55 * appearance
 
 
+def zone_situation_event(old_zone, zone, zone_transition):
+    """위험·주의 구역 체류 상황. 트램 접근 여부와 무관하게 API가 나중에 판단한다."""
+    active = {"warning", "danger"}
+    in_zone = zone in active
+    was_in_zone = old_zone in active
+    if in_zone and zone_transition == "WARNING_TO_DANGER":
+        return "ESCALATE"
+    if in_zone and not was_in_zone:
+        return "ENTER"
+    if in_zone:
+        return "STAY"
+    if was_in_zone:
+        return "EXIT"
+    return "NONE"
+
+
 def apply_object_events(objects, state, frame, max_distance, max_missed=30, reid_threshold=0.25):
-    """Track objects with motion and appearance, then emit alert state changes once."""
+    """Track objects with motion and appearance, then emit zone-situation changes once."""
     tracker = state.get("tracker")
     if tracker is None:
         tracker = state["tracker"] = Tracker(
@@ -193,6 +210,8 @@ def apply_object_events(objects, state, frame, max_distance, max_missed=30, reid
             reid_hit_counter_max=max_missed * 2,
         )
     previous = state.setdefault("previous", {})
+    falls = state.setdefault("falls", {})
+    now = time.monotonic()
     token = state["frame"] = state.get("frame", 0) + 1
     detections = [
         Detection(
@@ -223,18 +242,7 @@ def apply_object_events(objects, state, frame, max_distance, max_missed=30, reid
         else:
             zone_transition = f"{old_zone.upper()}_TO_{zone.upper()}"
 
-        was_alert = bool(old and old["alert"])
-        is_alert = bool(item.get("alert"))
-        if is_alert and not was_alert:
-            alert_event = "ENTER"
-        elif is_alert and zone_transition == "WARNING_TO_DANGER":
-            alert_event = "ESCALATE"
-        elif is_alert:
-            alert_event = "STAY"
-        elif was_alert:
-            alert_event = "EXIT"
-        else:
-            alert_event = "NONE"
+        alert_event = zone_situation_event(old_zone, zone, zone_transition)
 
         current = {
             **item,
@@ -244,12 +252,18 @@ def apply_object_events(objects, state, frame, max_distance, max_missed=30, reid
             "alertEvent": alert_event,
             "alertNotify": alert_event in {"ENTER", "ESCALATE", "EXIT"},
         }
-        previous[track_id] = {"zoneLevel": zone, "alert": is_alert}
+        if item["class"] == "person":
+            current.update(update_fall_state(item["bbox"], frame.shape, falls.setdefault(track_id, {}), now))
+            if current["fallState"] == "FALL_SUSPECTED":
+                current.update(alert=True, alertReason="PERSON_FALL_SUSPECTED")
+            current["alertNotify"] = current["alertNotify"] or current["fallNotify"]
+        previous[track_id] = {"zoneLevel": zone}
         enriched.append(current)
 
     active_ids = {tracked.id for tracked in tracker.tracked_objects}
     for track_id in set(previous) - active_ids:
         del previous[track_id]
+        falls.pop(track_id, None)
     return enriched
 
 
@@ -327,5 +341,7 @@ class YoloDnnDetector:
         detections = list(self._detections(frame))
         classes = set(target_classes) or DEFAULT_TARGET_CLASSES
         areas = zone_areas(zone, width, height)
-        objects = objects_in_areas(detections, areas, classes, include_outside=bool(zone and "zones" in zone))
+        if not areas:
+            areas = [{"name": "safe-default", "level": "safe", "points": [(0, 0), (width, 0), (width, height), (0, height)]}]
+        objects = objects_in_areas(detections, areas, classes, include_outside=True)
         return objects, (time.perf_counter() - started) * 1000

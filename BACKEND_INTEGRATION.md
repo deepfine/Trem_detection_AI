@@ -164,10 +164,10 @@ Content-Type: application/json
 5. 객체가 `person`이고 `danger` 또는 `warning`이며 Zone 간격 조건을 충족하면 `alert=true`로 설정한다.
 6. 동일 카메라의 객체 위치에 대한 Kalman 예측, 전역 거리 매칭 및 외형 특징 재식별을 수행하여 `trackId`를 부여한다.
 7. 이전 Zone과 현재 Zone을 비교하여 `zoneTransition`을 산출한다.
-8. 이전 알림 상태와 현재 알림 상태를 비교하여 `alertEvent`와 `alertNotify`를 산출한다.
+8. 이전 Zone과 현재 Zone으로 `alertEvent`와 `alertNotify`를 산출한다. 트램 위치가 없어도 위험·주의 구역 진입은 `ENTER`, 경고에서 위험으로 올라가면 `ESCALATE`, 체류는 `STAY`, 이탈은 `EXIT`다.
 9. AI 서버가 결과 callback을 전송한다.
 
-자전거, 오토바이, 킥보드, 휠체어와 리어카는 검출·저장 대상이지만 현재 알림 대상은 사람으로 한정한다. 위험 POLYGON에 객체가 있어도 트램 접근 조건을 충족하지 않으면 `alert=false`이다. 백엔드는 `zoneLevel`만으로 알림을 생성하지 않고 `alert`를 최종 신호로 사용한다.
+자전거, 오토바이, 킥보드, 휠체어와 리어카는 검출·저장 대상이지만 `alert=true`는 사람만 대상으로 한다. 트램 위치가 없으면 `alert=false`이고, 위험·주의 구역에 있는 상황은 `zoneLevel`과 `alertEvent`로 전달한다. 트램 접근 알림은 백엔드가 그 상황과 트램 위치를 맞춰 판단한다.
 
 `tramObservedAt`과 `tramPositionMaxAgeSeconds`가 모두 있고 위치가 만료되면 `failSafeOnMissingTramPosition` 설정과 관계없이 `TRAM_POSITION_STALE` 알림을 적용한다. `tramZone`이 누락된 경우에는 `failSafeOnMissingTramPosition=true`일 때만 `TRAM_POSITION_MISSING` 알림을 적용한다.
 
@@ -314,7 +314,7 @@ callback에는 `trackId`, `previousZoneLevel`, `zoneTransition`, `alertEvent`, `
 
 동일 객체가 계속 검출되고 경보 조건을 충족하면 `STAY`를 유지한다. 체류시간에 대한 10초 제한은 없으며 300초 이후에도 유지 가능하다. 4 FPS 기준 1,201회 연속 합성 검출로 300초 구간의 동일 ID와 `STAY` 유지를 검증하였다. 실제 영상에서의 가림·ID 전환에 대한 검증은 별도 수행이 필요하다. 미검출 추적 보관시간과 체류시간은 서로 다른 조건이다.
 
-`alert`는 현재 프레임의 경보 상태이므로 객체가 위험 범위에 머무르는 동안 `true`를 유지한다. `alertNotify`는 `ENTER`, `ESCALATE`, `EXIT` 시점에만 `true`이므로 신규 알림의 반복 전송을 억제한다. `WARNING_TO_DANGER` 전이 중 기존 알림이 유지되는 경우 `alertEvent=ESCALATE`를 산출한다.
+`alert`는 트램 접근 판정 결과다. 트램 위치가 없으면 `false`로 두고, 위험·주의 구역 상황은 `alertEvent`로 전달한다. `alertNotify`는 `ENTER`, `ESCALATE`, `EXIT` 시점에만 `true`다. `WARNING_TO_DANGER`이면 `alertEvent=ESCALATE`다.
 
 `trackId`는 `congestionSensorDeviceId`별 Norfair multi-object tracking 결과이다. Kalman 위치 예측과 HSV 외형 특징을 함께 적용하여 객체 교차와 일시 가림 이후의 ID 전환을 억제하며, 최대 30개 분석 프레임의 미검출 상태와 최대 60개 분석 프레임의 외형 재식별 후보를 유지한다. 분석 프로세스 재시작 이후에는 식별자가 재할당되므로 영구 DB 식별자로 사용하지 않는다.
 
@@ -335,3 +335,36 @@ callback에는 `trackId`, `previousZoneLevel`, `zoneTransition`, `alertEvent`, `
 `faces[].bbox`는 원본 이미지 좌표이다. AI 서버는 프레임을 수정하지 않으며 백엔드가 해당 좌표로 모자이크 또는 블러를 적용한다.
 
 통합 분석은 군중·객체·얼굴 구성요소 중 객체 또는 얼굴 분석 오류를 로그로 기록하고 나머지 결과를 `COMPLETED`로 callback할 수 있다. `raw.method`에 `objects365_yolo26n+mobility_yolov8s`가 없으면 `objects=[]`을 안전 판정으로 해석하지 않는다. 객체 알림 결과를 필수 데이터로 취급하는 연동은 객체 전용 endpoint를 사용한다.
+
+
+## 쓰러짐 의심 결과
+
+사람 class는 `person`으로 유지하고 다음 선택 필드를 추가한다. 기존 `alertEvent`는 구역 상황, `fallEvent`는 쓰러짐 상황으로 구분한다.
+
+| 필드 | 값과 의미 |
+| --- | --- |
+| `fallState` | `UNKNOWN`: 근거 부족 또는 확인 대기, `NORMAL`: 유효 박스이며 의심 조건 미충족, `FALL_SUSPECTED`: 쓰러짐 의심 활성 |
+| `fallEvent` | `ENTER`: 새 의심, `STAY`: 의심 유지, `EXIT`: 박스 비율·이동 조건에 따른 의심 해제, `NONE`: 의심 없음 |
+| `fallNotify` | `ENTER`, `EXIT`에서 `true` |
+| `alertReason` | 쓰러짐 의심 활성 시 `PERSON_FALL_SUSPECTED` |
+
+```json
+{
+  "class": "person",
+  "trackId": 7,
+  "zoneLevel": "safe",
+  "alert": true,
+  "alertReason": "PERSON_FALL_SUSPECTED",
+  "alertEvent": "NONE",
+  "alertNotify": true,
+  "fallState": "FALL_SUSPECTED",
+  "fallEvent": "ENTER",
+  "fallNotify": true
+}
+```
+
+활성 쓰러짐 의심은 `alertLevel=danger`로 집계한다. `alertNotify`는 구역 또는 쓰러짐의 통지 조건을 합산하므로 구역 변화 없이도 쓰러짐 시작·해제 시 `alertEventCount`에 포함된다. 실제 발생 지점의 `zoneLevel`은 보존한다.
+
+수신 API는 새 필드를 저장하고 `analysis_result`로 전달한다. 라이브 결과에서 `person`의 `FALL_SUSPECTED`·`fallEvent=ENTER`·`fallNotify=true`·`alert=true`이면 트램 GPS 필터를 거치지 않고 `DANGEROUS` 위험 알림으로 저장한 뒤 `risk_info`를 방송한다. `STAY`와 replay는 새 쓰러짐 알림을 반복하지 않는다. 해제는 `analysis_result`의 `fallEvent=EXIT`로 전달하며, 해제용 `risk_info`를 새로 생성하지 않는다.
+
+판정은 추가 자세 모델 없이 같은 사람의 박스가 같은 위치에 10초 이상 머물고, 현재 가로/세로 비율이 1.2 이상인 경우에 적용한다. 이동하거나 검출 간격이 1초를 넘으면 체류 시간을 다시 누적한다. 화면 경계에 잘린 박스는 새 의심을 만들지 않으며 활성 의심을 단독으로 해제하지 않는다. 실제 낙상·눕기·숙이기·박스 병합의 구분 정확도는 실제 영상 검증 전이며, 검출 실패나 ID 전환에 따른 누락·중복 가능성이 있다.

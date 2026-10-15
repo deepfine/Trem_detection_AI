@@ -9,7 +9,7 @@ RUN apt-get update \
 COPY requirements-serve.txt ./
 RUN python3 -m pip install --no-cache-dir -r requirements-serve.txt
 
-COPY anomaly_rules.py camera_zones.py detect_anomalies.py crowd_analysis_protocol.py crowd_analysis_server.py crowd_counter.py frame_faces.py frame_objects.py object_analysis_server.py zone_annotator.py ./
+COPY anomaly_rules.py camera_zones.py detect_anomalies.py crowd_analysis_protocol.py crowd_analysis_server.py crowd_counter.py frame_faces.py frame_falls.py frame_objects.py object_analysis_server.py zone_annotator.py ./
 
 ENV PYTHONUNBUFFERED=1 \
     ANALYSIS_HOST=0.0.0.0 \

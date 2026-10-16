@@ -253,8 +253,17 @@ def apply_object_events(objects, state, frame, max_distance, max_missed=30, reid
             "alertNotify": alert_event in {"ENTER", "ESCALATE", "EXIT"},
         }
         if item["class"] == "person":
-            current.update(update_fall_state(item["bbox"], frame.shape, falls.setdefault(track_id, {}), now))
-            if current["fallState"] == "FALL_SUSPECTED":
+            fall = falls.setdefault(track_id, {})
+            current.update(update_fall_state(item["bbox"], frame.shape, fall, now))
+            eligible = zone == "danger"
+            active = current["fallState"] == "FALL_SUSPECTED" and eligible
+            was_active = fall.get("signaled", False)
+            event = "ENTER" if active and not was_active else "EXIT" if was_active and not active else "STAY" if active else "NONE"
+            fall["signaled"] = active
+            current.update(fallEvent=event, fallNotify=event in {"ENTER", "EXIT"})
+            if not eligible:
+                current["fallState"] = "UNKNOWN"
+            if active:
                 current.update(alert=True, alertReason="PERSON_FALL_SUSPECTED")
             current["alertNotify"] = current["alertNotify"] or current["fallNotify"]
         previous[track_id] = {"zoneLevel": zone}

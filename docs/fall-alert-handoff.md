@@ -9,7 +9,7 @@
 | 사람·동물·이동수단 | 사람은 `person`, 동물은 `animal`, 킥보드는 `scooter`. 자전거·오토바이 포함, 차량 제외. 휠체어는 보조 검출 유지 |
 | 구역 상황 | 트램 위치와 별도로 `alertEvent`에 진입·체류·격상·이탈 상태 전달 |
 | 쓰러짐 의심 | 같은 위치에 10초 이상 체류하고 현재 박스의 가로/세로 비율이 1.2 이상일 때 활성화 |
-| 독립 경보 | 쓰러짐 의심은 트램 거리 및 구역과 관계없이 `alert=true` |
+| 독립 경보 | 쓰러짐 의심은 위험구역에서만 전달하며 실제 위험신호에는 기존 트램 접근 조건 적용 |
 | 전송 | `fallState`, `fallEvent`, `fallNotify`, 사유 `PERSON_FALL_SUSPECTED` 추가 |
 | 오류 수정 | 활성 의심 중 박스가 잠깐 잘렸다가 같은 위치의 가로 박스로 돌아오면 잘못 `EXIT`를 보내던 오류 수정 |
 
@@ -35,7 +35,7 @@
   → HTTP POST callback
   → 수신 API 검증 및 결과 저장
   → analysis_result 방송
-  → 새 쓰러짐 의심은 GPS 필터 없이 risk_alarm 저장 후 risk_info 방송
+  → 위험구역의 새 쓰러짐 의심에 기존 트램 접근 조건을 적용한 뒤 risk_info 방송
 ```
 
 통합 서버 기본 주소는 `POST http://api:3535/crowd/results`이며 `VISIT_SERVANT_RESULT_URL`로 지정한다. 객체 전용 서버는 `OBJECT_RESULT_URL`의 `/object/results`로 전송하며 군중 수·얼굴 필드는 생략한다. 수신 환경에서 사용하는 endpoint의 계약을 먼저 확인한다.
@@ -56,13 +56,13 @@
       "confidence": 0.94,
       "bbox": [100, 200, 240, 260],
       "trackId": 7,
-      "zoneLevel": "safe",
-      "zoneName": "safe-default",
+      "zoneLevel": "danger",
+      "zoneName": "danger-8",
       "alert": true,
       "alertReason": "PERSON_FALL_SUSPECTED",
-      "previousZoneLevel": "safe",
+      "previousZoneLevel": "danger",
       "zoneTransition": "NONE",
-      "alertEvent": "NONE",
+      "alertEvent": "STAY",
       "alertNotify": true,
       "fallState": "FALL_SUSPECTED",
       "fallEvent": "ENTER",
@@ -93,7 +93,7 @@
 | `fallNotify` | boolean | 쓰러짐 `ENTER`, `EXIT`일 때 `true` |
 | `alertNotify` | boolean | 구역 통지 조건 또는 쓰러짐 통지 조건 |
 | `alert` | boolean | 트램 정책 또는 활성 쓰러짐 의심에 따른 경보 상태 |
-| `alertLevel` | `danger`, `warning`, null | 쓰러짐 의심 활성 시 실제 구역이 safe여도 `danger` |
+| `alertLevel` | `danger`, `warning`, null | 위험구역에서 쓰러짐 의심 활성 시 `danger` |
 | `alertObjectCount` | 정수 | 현재 `alert=true`인 객체 수 |
 | `alertEventCount` | 정수 | 이번 결과의 `alertNotify=true` 객체 수. 같은 객체의 구역·쓰러짐 이벤트는 중복 집계하지 않음 |
 
@@ -105,7 +105,7 @@
 
 1. `CrowdDetectedObject`에 세 쓰러짐 필드를 optional로 추가하고, `AnalysisAlertReason`에 `PERSON_FALL_SUSPECTED`를 추가한다.
 2. 결과 파서가 필드를 보존하도록 수정한다. tsoa의 추가 필드 거절 설정을 유지할 경우 `npx tsoa spec-and-routes`로 검증 라우트와 Swagger를 재생성한다.
-3. 라이브 성공 결과에서 `class=person`, `fallState=FALL_SUSPECTED`, `fallEvent=ENTER`, `fallNotify=true`, `alert=true`를 모두 만족하면 독립 위험 알림을 저장·방송한다. 트램 GPS 필터를 적용하지 않는다.
+3. 라이브 성공 결과에서 `class=person`, `fallState=FALL_SUSPECTED`, `fallEvent=ENTER`, `fallNotify=true`, `alert=true`를 모두 만족하면 독립 위험 알림을 저장·방송한다. 기존 트램 접근 윈도우에 해당 CCTV 구역이 포함되는 경우에만 실제 위험신호를 보낸다.
 4. `fallEvent=STAY`는 상태만 갱신하고 새 알림을 반복하지 않는다. `EXIT`는 `analysis_result`로 해제 상태를 전달하며 새 `risk_info`를 생성하지 않는다.
 5. replay는 `analysis_result`만 방송하고 쓰러짐 알림 저장·재방송을 수행하지 않는다.
 
@@ -169,3 +169,6 @@ python docs/replay-fall-validation.py
 ```
 
 실제 쓰러짐·눕기·숙이기·박스 병합에 대한 정확도, ID 연속성의 정답 대비 정확도, 전체 실시간 지연·적체·드롭은 미검증이다. 상태 계산과 계약 테스트 통과를 실제 낙상 검출 성능으로 해석하지 않는다.
+
+
+쓰러짐 위험신호의 최종 조건은 위험구역(`danger`)과 기존 트램 접근 조건의 동시 충족이다. 안전·주의 구역은 제외한다. 분석 callback은 관측 결과이고, 사용자에게 보내는 `risk_info`는 기존 백엔드 접근 윈도우를 재사용한다. 새 접근 계산·전달 필드·유효시간은 추가하지 않는다.

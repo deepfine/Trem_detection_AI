@@ -92,7 +92,7 @@ mv yolo26n-objv1-150.onnx result/models/objects365_yolo26n.onnx
 
 위치는 박스 하단 중앙을 기준으로 하며 체류 시작 박스 높이의 절반(최소 10px)을 벗어나면 시간을 다시 누적한다. 검출 간격이 1초를 넘거나 박스가 잘리면 체류 시간을 초기화한다. 같은 위치에 계속 머문 상태에서 박스가 가로로 길어지면 다시 10초를 기다리지 않는다. 박스가 정상 비율로 돌아오거나 이동해 조건을 벗어나면 해제한다. 잘린 박스만으로 활성 경보를 해제하지 않는다.
 
-쓰러짐 의심은 트램 거리·구역과 관계없이 `alert=true`, `alertReason=PERSON_FALL_SUSPECTED`를 산출한다. 기존 구역 `alertEvent`와 별도로 `fallEvent`를 전달한다. `/health`에서 `fall_detection_method=bbox_dwell`을 확인한다. 눕기·숙이기·사람 간 박스 병합을 실제 쓰러짐과 구분하는 정확도 검증은 필요하다.
+쓰러짐 의심은 위험구역(`danger`)에서만 판정 결과를 전달한다. 실제 위험신호는 백엔드의 기존 트램 접근 조건을 충족할 때만 보낸다. 기존 구역 `alertEvent`와 별도로 `fallEvent`를 전달한다. `/health`에서 `fall_detection_method=bbox_dwell`을 확인한다. 눕기·숙이기·사람 간 박스 병합을 실제 쓰러짐과 구분하는 정확도 검증은 필요하다.
 
 ## DM-Count 가중치
 
@@ -338,3 +338,6 @@ pytest -q
 | `zone_annotator.py`          | 카메라별 위험구역 웹 편집기                          |
 | `camera_zones.py`            | 장비 ID ↔ 구역 JSON 매칭                            |
 | `zones.example.json`         | 다각형 구역 예시                                     |
+
+
+쓰러짐 위험신호의 최종 조건은 위험구역(`danger`)과 기존 트램 접근 조건의 동시 충족이다. 안전·주의 구역은 제외한다. 분석 callback은 관측 결과이고, 사용자에게 보내는 `risk_info`는 기존 백엔드 접근 윈도우를 재사용한다. 새 접근 계산·전달 필드·유효시간은 추가하지 않는다.

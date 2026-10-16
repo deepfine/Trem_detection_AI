@@ -54,7 +54,7 @@ def test_person_is_kept_without_zone_for_independent_fall_analysis(monkeypatch):
     assert objects[0]["class"] == "person" and objects[0]["zoneLevel"] == "safe"
 
 
-def test_fall_alert_ignores_tram_and_zone_and_reaches_callback(monkeypatch):
+def test_danger_fall_observation_reaches_callback(monkeypatch):
     state = {}
     frame = np.zeros(SHAPE, np.uint8)
     now = [0.0]
@@ -62,7 +62,7 @@ def test_fall_alert_ignores_tram_and_zone_and_reaches_callback(monkeypatch):
     def sample():
         return apply_object_events([{
             "class": "person", "confidence": 0.9, "bbox": WIDE,
-            "zoneLevel": "safe", "alert": False, "alertReason": "",
+            "zoneLevel": "danger", "alert": True, "alertReason": "TRAM_ZONE_PROXIMITY",
         }], state, frame, 100)[0]
     first = sample()
     for step in range(1, int(FALL_DWELL_SECONDS * 4) + 1):
@@ -123,8 +123,8 @@ def test_fall_state_is_isolated_between_people_and_retired_ids(monkeypatch):
     now = [0.0]
     monkeypatch.setattr("frame_objects.time.monotonic", lambda: now[0])
     objects = [
-        {"class": "person", "confidence": 0.9, "bbox": WIDE, "zoneLevel": "safe", "alert": False},
-        {"class": "person", "confidence": 0.9, "bbox": [260, 100, 300, 220], "zoneLevel": "safe", "alert": False},
+        {"class": "person", "confidence": 0.9, "bbox": WIDE, "zoneLevel": "danger", "alert": True, "alertReason": "TRAM_ZONE_PROXIMITY"},
+        {"class": "person", "confidence": 0.9, "bbox": [260, 100, 300, 220], "zoneLevel": "danger", "alert": True, "alertReason": "TRAM_ZONE_PROXIMITY"},
         {"class": "dog", "confidence": 0.9, "bbox": [210, 250, 350, 300], "zoneLevel": "safe", "alert": False},
     ]
     for step in range(41):
@@ -139,3 +139,16 @@ def test_fall_state_is_isolated_between_people_and_retired_ids(monkeypatch):
     result = apply_object_events(objects[:1], state, frame, 100, max_missed=2)[0]
     assert result["trackId"] != old_id
     assert result["fallEvent"] == "NONE"
+
+
+@pytest.mark.parametrize("zone,expected", [("danger", True), ("warning", False), ("safe", False)])
+def test_fall_observation_is_limited_to_danger_zone(zone, expected, monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("frame_objects.time.monotonic", lambda: now[0])
+    state = {}
+    image = np.zeros(SHAPE, np.uint8)
+    for step in range(41):
+        now[0] = step / 4
+        item = apply_object_events([{"class": "person", "confidence": 0.9, "bbox": WIDE, "zoneLevel": zone, "alert": False}], state, image, 100)[0]
+    assert (item["fallEvent"] == "ENTER") is expected
+    assert (item.get("alertReason") == "PERSON_FALL_SUSPECTED") is expected

@@ -354,10 +354,10 @@ callback에는 `trackId`, `previousZoneLevel`, `zoneTransition`, `alertEvent`, `
 {
   "class": "person",
   "trackId": 7,
-  "zoneLevel": "safe",
+  "zoneLevel": "danger",
   "alert": true,
   "alertReason": "PERSON_FALL_SUSPECTED",
-  "alertEvent": "NONE",
+  "alertEvent": "STAY",
   "alertNotify": true,
   "fallState": "FALL_SUSPECTED",
   "fallEvent": "ENTER",
@@ -367,6 +367,9 @@ callback에는 `trackId`, `previousZoneLevel`, `zoneTransition`, `alertEvent`, `
 
 활성 쓰러짐 의심은 `alertLevel=danger`로 집계한다. `alertNotify`는 구역 또는 쓰러짐의 통지 조건을 합산하므로 구역 변화 없이도 쓰러짐 시작·해제 시 `alertEventCount`에 포함된다. 실제 발생 지점의 `zoneLevel`은 보존한다.
 
-수신 API는 새 필드를 저장하고 `analysis_result`로 전달한다. 라이브 결과에서 `person`의 `FALL_SUSPECTED`·`fallEvent=ENTER`·`fallNotify=true`·`alert=true`이면 트램 GPS 필터를 거치지 않고 `DANGEROUS` 위험 알림으로 저장한 뒤 `risk_info`를 방송한다. `STAY`와 replay는 새 쓰러짐 알림을 반복하지 않는다. 해제는 `analysis_result`의 `fallEvent=EXIT`로 전달하며, 해제용 `risk_info`를 새로 생성하지 않는다.
+수신 API는 새 필드를 저장하고 `analysis_result`로 전달한다. 라이브 결과에서 `person`의 `FALL_SUSPECTED`·`fallEvent=ENTER`·`fallNotify=true`·`alert=true`이면 위험구역이며 기존 트램 접근 윈도우 조건을 충족한 경우에만 `DANGEROUS` 위험 알림으로 저장한 뒤 `risk_info`를 방송한다. `STAY`와 replay는 새 쓰러짐 알림을 반복하지 않는다. 해제는 `analysis_result`의 `fallEvent=EXIT`로 전달하며, 해제용 `risk_info`를 새로 생성하지 않는다.
 
 판정은 추가 자세 모델 없이 같은 사람의 박스가 같은 위치에 10초 이상 머물고, 현재 가로/세로 비율이 1.2 이상인 경우에 적용한다. 이동하거나 검출 간격이 1초를 넘으면 체류 시간을 다시 누적한다. 화면 경계에 잘린 박스는 새 의심을 만들지 않으며 활성 의심을 단독으로 해제하지 않는다. 실제 낙상·눕기·숙이기·박스 병합의 구분 정확도는 실제 영상 검증 전이며, 검출 실패나 ID 전환에 따른 누락·중복 가능성이 있다.
+
+
+쓰러짐 위험신호의 최종 조건은 위험구역(`danger`)과 기존 트램 접근 조건의 동시 충족이다. 안전·주의 구역은 제외한다. 분석 callback은 관측 결과이고, 사용자에게 보내는 `risk_info`는 기존 백엔드 접근 윈도우를 재사용한다. 새 접근 계산·전달 필드·유효시간은 추가하지 않는다.

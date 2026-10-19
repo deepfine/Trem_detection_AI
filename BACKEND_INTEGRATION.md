@@ -164,7 +164,7 @@ Content-Type: application/json
 5. 객체가 `person`이고 `danger` 또는 `warning`이며 Zone 간격 조건을 충족하면 `alert=true`로 설정한다.
 6. 동일 카메라의 객체 위치에 대한 Kalman 예측, 전역 거리 매칭 및 외형 특징 재식별을 수행하여 `trackId`를 부여한다.
 7. 이전 Zone과 현재 Zone을 비교하여 `zoneTransition`을 산출한다.
-8. 이전 Zone과 현재 Zone으로 `alertEvent`와 `alertNotify`를 산출한다. 트램 위치가 없어도 위험·주의 구역 진입은 `ENTER`, 경고에서 위험으로 올라가면 `ESCALATE`, 체류는 `STAY`, 이탈은 `EXIT`다. 구역 단계 하향(이탈, 위험→주의)은 같은 객체에서 3프레임(약 1.5초) 연속 관측될 때만 반영하며, 그동안 `zoneLevel`·`zoneName`은 직전 구역을 유지하고 `STAY`를 보낸다. 구역 경계에 걸친 정지 객체가 매 프레임 `EXIT`·`ENTER`를 반복하던 문제를 막기 위한 것이다. 진입·`ESCALATE`는 지연 없이 즉시 보낸다.
+8. 이전 Zone과 현재 Zone으로 `alertEvent`와 `alertNotify`를 산출한다. 트램 위치가 없어도 위험·주의 구역 진입은 `ENTER`, 경고에서 위험으로 올라가면 `ESCALATE`, 체류는 `STAY`, 이탈은 `EXIT`다. 구역 단계 하향(이탈, 위험→주의)은 같은 객체에서 3프레임(약 1.5초) 연속 관측될 때만 반영하며, 그동안 `zoneLevel`·`zoneName`은 직전 구역을 유지하고 `STAY`를 보낸다. 구역 경계에 걸친 정지 객체가 매 프레임 `EXIT`·`ENTER`를 반복하던 문제를 막기 위한 것이다. 진입·`ESCALATE`는 지연 없이 즉시 보낸다. 같은 위치에 머문 객체(주차 자전거 등)는 하향이 60초 연속 유지될 때만 반영한다. 정지해 있던 객체가 검출에서 잠시 빠졌다가 60초 안에 같은 위치·같은 class로 다시 검출되면 이전 `trackId`와 구역 상태를 이어받아 `ENTER`를 다시 보내지 않는다. 이동하던 객체는 이어받지 않으므로 같은 자리에 새로 들어온 사람은 새 `trackId`로 `ENTER`를 받는다.
 9. AI 서버가 결과 callback을 전송한다.
 
 자전거, 오토바이, 킥보드, 휠체어와 리어카는 검출·저장 대상이지만 `alert=true`는 사람만 대상으로 한다. 트램 위치가 없으면 `alert=false`이고, 위험·주의 구역에 있는 상황은 `zoneLevel`과 `alertEvent`로 전달한다. 트램 접근 알림은 백엔드가 그 상황과 트램 위치를 맞춰 판단한다.

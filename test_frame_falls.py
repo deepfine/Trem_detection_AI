@@ -3,7 +3,7 @@ import pytest
 
 from crowd_analysis_protocol import alert_summary, api_callback_payload
 from frame_falls import FALL_DWELL_SECONDS, update_fall_state
-from frame_objects import YoloDnnDetector, apply_object_events
+from frame_objects import LOST_TRACK_SECONDS, YoloDnnDetector, apply_object_events
 
 
 WIDE = [10, 40, 150, 100]
@@ -137,6 +137,13 @@ def test_fall_state_is_isolated_between_people_and_retired_ids(monkeypatch):
         now[0] += 0.25
         apply_object_events([], state, frame, 100, max_missed=2)
     assert state["falls"] == {}
+    # Reappearing at the same place within LOST_TRACK_SECONDS is the same person: no second fall alarm.
+    result = apply_object_events(objects[:1], state, frame, 100, max_missed=2)[0]
+    assert result["trackId"] == old_id
+    assert result["fallEvent"] == "STAY" and result["alertEvent"] == "STAY"
+    for step in range(int(LOST_TRACK_SECONDS * 4) + 4):
+        now[0] += 0.25
+        apply_object_events([], state, frame, 100, max_missed=2)
     result = apply_object_events(objects[:1], state, frame, 100, max_missed=2)[0]
     assert result["trackId"] != old_id
     assert result["fallEvent"] == "NONE"

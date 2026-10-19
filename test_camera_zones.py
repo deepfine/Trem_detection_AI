@@ -11,7 +11,7 @@ from camera_zones import (
     zones_from_payload,
     zone_file,
 )
-from frame_objects import ZONE_EXIT_FRAMES, apply_object_events, apply_tram_policy, objects_in_areas, objects_in_polygons, zone_areas, zone_polygon, zone_polygons, zone_situation_event
+from frame_objects import STATIONARY_EXIT_SECONDS, ZONE_EXIT_FRAMES, apply_object_events, apply_tram_policy, objects_in_areas, objects_in_polygons, zone_areas, zone_polygon, zone_polygons, zone_situation_event
 
 
 def test_parse_camera_folder():
@@ -93,11 +93,11 @@ def test_tram_policy_uses_uncertainty_direction_and_fail_safe():
 def test_object_events_track_warning_to_danger_and_suppress_repeats():
     state = {}
 
-    def frame(level, alert):
+    def frame(level, alert, x=10):
         return apply_object_events([{
             "class": "person",
             "confidence": 0.9,
-            "bbox": [10, 10, 30, 50],
+            "bbox": [x, 10, x + 20, 50],
             "zoneLevel": level,
             "zoneName": level,
             "alert": alert,
@@ -106,8 +106,9 @@ def test_object_events_track_warning_to_danger_and_suppress_repeats():
     warning = frame("warning", True)
     danger = frame("danger", True)
     staying = frame("danger", True)
-    held = [frame("safe", False) for _ in range(ZONE_EXIT_FRAMES - 1)]
-    safe = frame("safe", False)
+    # Leaving means walking away; the box moves.
+    held = [frame("safe", False, 25 + 15 * i) for i in range(ZONE_EXIT_FRAMES - 1)]
+    safe = frame("safe", False, 25 + 15 * (ZONE_EXIT_FRAMES - 1))
 
     assert warning["alertEvent"] == "ENTER" and warning["alertNotify"] is True
     assert danger["trackId"] == warning["trackId"]
@@ -122,15 +123,67 @@ def test_object_events_track_warning_to_danger_and_suppress_repeats():
 def test_zone_boundary_flicker_does_not_repeat_exit_and_enter():
     state = {}
 
-    def frame(level):
-        return apply_object_events([{"class": "bicycle", "confidence": 0.8, "bbox": [10, 10, 30, 50],
+    def frame(level, x=10):
+        return apply_object_events([{"class": "bicycle", "confidence": 0.8, "bbox": [x, 10, x + 20, 50],
                                      "zoneLevel": level, "zoneName": level}], state, np.zeros((100, 100, 3), np.uint8), max_distance=100)[0]
 
     events = [frame(level)["alertEvent"] for level in ["warning", "safe", "warning", "safe", "safe", "warning"]]
     assert events == ["ENTER", "STAY", "STAY", "STAY", "STAY", "STAY"]
-    # A real exit still arrives after the hold, and re-entry is immediate.
-    assert [frame("safe")["alertEvent"] for _ in range(ZONE_EXIT_FRAMES)][-1] == "EXIT"
-    assert frame("danger")["alertEvent"] == "ENTER"
+    # Parked on the boundary: mostly outside with brief blips inside still never exits and re-enters.
+    events = [frame("warning" if i % 5 == 0 else "safe")["alertEvent"] for i in range(30)]
+    assert set(events) == {"STAY"}
+    # Ridden away: the exit arrives within the short hold, and re-entry is immediate.
+    assert "EXIT" in [frame("safe", 25 + 15 * i)["alertEvent"] for i in range(ZONE_EXIT_FRAMES)]
+    assert frame("danger", 70)["alertEvent"] == "ENTER"
+
+
+def test_stationary_object_exits_after_a_long_absence(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("frame_objects.time.monotonic", lambda: now[0])
+    state, image = {}, np.zeros((100, 100, 3), np.uint8)
+    bike = {"class": "bicycle", "confidence": 0.8, "bbox": [10, 10, 30, 50], "zoneName": "w"}
+    assert apply_object_events([{**bike, "zoneLevel": "warning"}], state, image, 100)[0]["alertEvent"] == "ENTER"
+    events = []
+    for step in range(1, 140):
+        now[0] = step * 0.5
+        events.append(apply_object_events([{**bike, "zoneLevel": "safe"}], state, image, 100)[0]["alertEvent"])
+    assert events.count("EXIT") == 1 and events.index("EXIT") >= int(STATIONARY_EXIT_SECONDS / 0.5) - 1
+
+
+def test_intermittent_parked_object_keeps_id_and_does_not_reenter(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("frame_objects.time.monotonic", lambda: now[0])
+    state, image = {}, np.zeros((100, 100, 3), np.uint8)
+    bike = {"class": "bicycle", "confidence": 0.6, "bbox": [40, 40, 60, 70], "zoneLevel": "danger", "zoneName": "danger-1"}
+    seen = []
+    # Detected one frame in four, as a parked bicycle near the confidence threshold was.
+    for step in range(40):
+        now[0] = step * 0.5
+        out = apply_object_events([dict(bike)] if step % 4 == 0 else [], state, image, 100, max_missed=1)
+        seen += [(item["trackId"], item["alertEvent"]) for item in out]
+    assert len({track for track, _ in seen}) == 1
+    assert [event for _, event in seen].count("ENTER") == 1
+    # A different class at the same place is a different object.
+    person = apply_object_events([{**bike, "class": "person"}], state, image, 100, max_missed=1)[0]
+    assert person["trackId"] != seen[0][0] and person["alertEvent"] == "ENTER"
+
+
+def test_new_person_where_a_walker_vanished_still_enters(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("frame_objects.time.monotonic", lambda: now[0])
+    state, image = {}, np.zeros((100, 100, 3), np.uint8)
+    walker = {"class": "person", "confidence": 0.9, "zoneLevel": "danger", "zoneName": "danger-1"}
+    first = None
+    for step, x in enumerate(range(0, 40, 8)):
+        now[0] = step * 0.5
+        out = apply_object_events([{**walker, "bbox": [x, 40, x + 20, 80]}], state, image, 100, max_missed=1)
+        first = first or out[0]["trackId"]
+    for step in range(4):
+        now[0] += 0.5
+        apply_object_events([], state, image, 100, max_missed=1)
+    now[0] += 0.5
+    newcomer = apply_object_events([{**walker, "bbox": [32, 40, 52, 80]}], state, image, 100, max_missed=1)[0]
+    assert newcomer["trackId"] != first and newcomer["alertEvent"] == "ENTER"
 
 
 def test_zone_situation_is_delivered_without_tram_alert():
@@ -145,11 +198,11 @@ def test_zone_situation_is_delivered_without_tram_alert():
 
     state = {}
 
-    def frame(level):
+    def frame(level, x=10):
         return apply_object_events([{
             "class": "person",
             "confidence": 0.9,
-            "bbox": [10, 10, 30, 50],
+            "bbox": [x, 10, x + 20, 50],
             "zoneLevel": level,
             "zoneName": level,
             "alert": False,
@@ -158,7 +211,7 @@ def test_zone_situation_is_delivered_without_tram_alert():
 
     entered = frame("danger")
     staying = frame("danger")
-    left = [frame("safe") for _ in range(ZONE_EXIT_FRAMES)][-1]
+    left = [frame("safe", 25 + 15 * i) for i in range(ZONE_EXIT_FRAMES)][-1]
     assert entered["alert"] is False
     assert entered["alertEvent"] == "ENTER" and entered["alertNotify"] is True
     assert staying["alertEvent"] == "STAY" and staying["alertNotify"] is False

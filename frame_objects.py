@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import ast
 import time
 from pathlib import Path
@@ -18,6 +19,13 @@ ZONE_PRIORITY = {"safe": 0, "warning": 1, "danger": 2}
 # A lower zone must persist this many frames before it replaces the current one; entering stays immediate.
 # A parked bicycle on a zone boundary otherwise produced an EXIT/ENTER pair almost every frame.
 ZONE_EXIT_FRAMES = 3
+# A stationary object straddling a boundary flickers in and out for minutes; it leaves only after this long outside.
+STATIONARY_EXIT_SECONDS = 60.0
+# A lost track's id and zone state are handed to a new track of the same class at the same place,
+# only when the lost object had stayed put; a walker's spot must not hide the next person's ENTER.
+# Intermittently detected parked objects otherwise got a new id, and a new ENTER, every few frames.
+LOST_TRACK_SECONDS = 60.0
+LOST_TRACK_IOU = 0.5
 # Mobility boxes covering a fifth of a CCTV frame were stretched-input false wheelchairs.
 MOBILITY_MAX_AREA = 0.2
 CLASS_ALIASES = {
@@ -33,6 +41,12 @@ def bbox_iou(a, b):
     overlap = max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
     union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - overlap
     return overlap / union if union > 0 else 0.0
+
+
+def same_place(a, b):
+    """Overlapping boxes, or centres within half a box for small boxes whose IoU jitters."""
+    reach = 0.5 * max(b[2] - b[0], b[3] - b[1])
+    return bbox_iou(a, b) >= LOST_TRACK_IOU or math.dist(((a[0] + a[2]) / 2, (a[1] + a[3]) / 2), ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)) <= reach
 
 
 def zone_polygon(zone: dict | None, frame_width: int, frame_height: int):
@@ -222,6 +236,8 @@ def apply_object_events(objects, state, frame, max_distance, max_missed=30, reid
         )
     previous = state.setdefault("previous", {})
     falls = state.setdefault("falls", {})
+    aliases = state.setdefault("aliases", {})
+    lost = state.setdefault("lost", {})
     now = time.monotonic()
     token = state["frame"] = state.get("frame", 0) + 1
     detections = [
@@ -239,21 +255,41 @@ def apply_object_events(objects, state, frame, max_distance, max_missed=30, reid
         if tracked.last_detection.data["frame"] == token
     ]
     current_tracks.sort(key=lambda tracked: tracked.last_detection.data["index"])
+    # Ids of tracks already known this frame cannot be handed to a new track.
+    seen_now = {aliases[tracked.id] for tracked in current_tracks if tracked.id in aliases}
     enriched = []
     for tracked in current_tracks:
         item = tracked.last_detection.data["item"]
-        track_id = tracked.id
+        if tracked.id not in aliases:
+            aliases[tracked.id] = tracked.id
+            # Fading tracks stay in the tracker for a while, so unseen live ids are candidates too.
+            stale = {key: {"class": entry["class"], "bbox": entry["bbox"], "time": entry["time"], "origin": entry["origin"]}
+                     for key, entry in previous.items() if key not in seen_now and entry["time"] < now}
+            match = max(((bbox_iou(item["bbox"], entry["bbox"]), key) for key, entry in {**lost, **stale}.items()
+                         if entry["class"] == item["class"] and now - entry["time"] <= LOST_TRACK_SECONDS
+                         and same_place(entry["bbox"], entry["origin"]) and same_place(item["bbox"], entry["bbox"])), default=(-1, None))
+            if match[1] is not None:
+                aliases[tracked.id] = match[1]
+                if match[1] in lost:
+                    entry = lost.pop(match[1])
+                    previous[match[1]] = entry["previous"]
+                    if entry["fall"] is not None:
+                        falls[match[1]] = entry["fall"]
+        track_id = aliases[tracked.id]
+        seen_now.add(track_id)
         old = previous.get(track_id)
         old_zone = old["zoneLevel"] if old else None
         zone = item.get("zoneLevel", "safe")
-        lower_frames = 0
+        lower_frames, lower_since = 0, None
         if old_zone and ZONE_PRIORITY.get(zone, 0) < ZONE_PRIORITY.get(old_zone, 0):
             lower_frames = old.get("lowerFrames", 0) + 1
-            if lower_frames < ZONE_EXIT_FRAMES:
+            lower_since = old.get("lowerSince") or now
+            stationary = same_place(item["bbox"], old["origin"])
+            if lower_frames < ZONE_EXIT_FRAMES or (stationary and now - lower_since < STATIONARY_EXIT_SECONDS):
                 zone = old_zone
                 item = {**item, "zoneLevel": old_zone, "zoneName": old.get("zoneName", item.get("zoneName"))}
             else:
-                lower_frames = 0
+                lower_frames, lower_since = 0, None
         if old_zone == zone:
             zone_transition = "NONE"
         elif old_zone is None:
@@ -285,13 +321,21 @@ def apply_object_events(objects, state, frame, max_distance, max_missed=30, reid
             if active:
                 current.update(alert=True, alertReason="PERSON_FALL_SUSPECTED")
             current["alertNotify"] = current["alertNotify"] or current["fallNotify"]
-        previous[track_id] = {"zoneLevel": zone, "zoneName": item.get("zoneName"), "lowerFrames": lower_frames}
+        previous[track_id] = {"zoneLevel": zone, "zoneName": item.get("zoneName"), "lowerFrames": lower_frames, "lowerSince": lower_since,
+                              "class": item["class"], "bbox": item["bbox"], "time": now,
+                              "origin": old["origin"] if old else item["bbox"]}
         enriched.append(current)
 
-    active_ids = {tracked.id for tracked in tracker.tracked_objects}
+    active_ids = {aliases.get(tracked.id, tracked.id) for tracked in tracker.tracked_objects}
     for track_id in set(previous) - active_ids:
-        del previous[track_id]
-        falls.pop(track_id, None)
+        last = previous.pop(track_id)
+        lost[track_id] = {"class": last["class"], "bbox": last["bbox"], "time": last["time"], "origin": last["origin"],
+                          "previous": last, "fall": falls.pop(track_id, None)}
+    for track_id in [key for key, entry in lost.items() if now - entry["time"] > LOST_TRACK_SECONDS]:
+        del lost[track_id]
+    live = {tracked.id for tracked in tracker.tracked_objects}
+    for tracker_id in [key for key in aliases if key not in live]:
+        del aliases[tracker_id]
     return enriched
 
 

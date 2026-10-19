@@ -164,7 +164,7 @@ Content-Type: application/json
 5. 객체가 `person`이고 `danger` 또는 `warning`이며 Zone 간격 조건을 충족하면 `alert=true`로 설정한다.
 6. 동일 카메라의 객체 위치에 대한 Kalman 예측, 전역 거리 매칭 및 외형 특징 재식별을 수행하여 `trackId`를 부여한다.
 7. 이전 Zone과 현재 Zone을 비교하여 `zoneTransition`을 산출한다.
-8. 이전 Zone과 현재 Zone으로 `alertEvent`와 `alertNotify`를 산출한다. 트램 위치가 없어도 위험·주의 구역 진입은 `ENTER`, 경고에서 위험으로 올라가면 `ESCALATE`, 체류는 `STAY`, 이탈은 `EXIT`다.
+8. 이전 Zone과 현재 Zone으로 `alertEvent`와 `alertNotify`를 산출한다. 트램 위치가 없어도 위험·주의 구역 진입은 `ENTER`, 경고에서 위험으로 올라가면 `ESCALATE`, 체류는 `STAY`, 이탈은 `EXIT`다. 구역 단계 하향(이탈, 위험→주의)은 같은 객체에서 3프레임(약 1.5초) 연속 관측될 때만 반영하며, 그동안 `zoneLevel`·`zoneName`은 직전 구역을 유지하고 `STAY`를 보낸다. 구역 경계에 걸친 정지 객체가 매 프레임 `EXIT`·`ENTER`를 반복하던 문제를 막기 위한 것이다. 진입·`ESCALATE`는 지연 없이 즉시 보낸다.
 9. AI 서버가 결과 callback을 전송한다.
 
 자전거, 오토바이, 킥보드, 휠체어와 리어카는 검출·저장 대상이지만 `alert=true`는 사람만 대상으로 한다. 트램 위치가 없으면 `alert=false`이고, 위험·주의 구역에 있는 상황은 `zoneLevel`과 `alertEvent`로 전달한다. 트램 접근 알림은 백엔드가 그 상황과 트램 위치를 맞춰 판단한다.
@@ -336,6 +336,14 @@ callback에는 `trackId`, `previousZoneLevel`, `zoneTransition`, `alertEvent`, `
 
 통합 분석은 군중·객체·얼굴 구성요소 중 객체 또는 얼굴 분석 오류를 로그로 기록하고 나머지 결과를 `COMPLETED`로 callback할 수 있다. `raw.method`에 `objects365_yolo26n+mobility_yolov8s`가 없으면 `objects=[]`을 안전 판정으로 해석하지 않는다. 객체 알림 결과를 필수 데이터로 취급하는 연동은 객체 전용 endpoint를 사용한다.
 
+
+## YOLO26 검출 설정
+
+정지 자전거의 프레임 간 복구와 선택적 출처 필드는 [자전거 누락 개선 기록](docs/bicycle-miss-upgrade.md)을 참조한다. `ROI_REDETECTION`은 현재 프레임의 모델 재검출이며, `VISUAL_TRACKER`는 이전 모델 검출을 영상 일치로 보완한 추정이다. `VISUAL_TRACKER`의 `confidence`를 현재 프레임의 YOLO 점수로 해석하지 않는다. 현재 백엔드 수신기의 필드 보존 패치를 적용하기 전에는 `OBJECT_VISUAL_RECOVERY=0`을 유지한다. 현재 백엔드는 정의되지 않은 객체 필드를 HTTP 422로 거부하여 프레임 결과 전체를 잃으므로, AI 서버는 `OBJECT_DETECTION_SOURCE_FIELDS=1`일 때만 출처 필드를 전송한다(기본 `0`).
+
+정확도 중심 헤드·고해상도 입력·FP16·선택적 TensorRT 실행 경로와 검증 결과는 [YOLO26 적용 기록](docs/yolo26-adoption.md)을 참조한다. `OBJECT_MODEL_PATH`로 지정한 ONNX의 입력 크기·정밀도를 자동으로 확인하고, 결과 `bbox`는 원본 이미지 좌표로 복원한다. 주 모델 1280과 보조 모델 640을 함께 사용할 수 있다.
+
+`OBJECT_TENSORRT=1`은 TensorRT 라이브러리와 ONNX Runtime provider 검증 후에 설정한다. 현재 기본값은 CUDA 실행이며, TensorRT 초기화가 실패하면 모델 로딩을 실패 처리한다. 이 설정은 실제 TensorRT 처리 속도가 검증되었다는 의미가 아니다.
 
 ## 쓰러짐 의심 결과
 

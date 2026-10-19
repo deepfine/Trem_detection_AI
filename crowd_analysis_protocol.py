@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -212,6 +213,9 @@ CALLBACK_OBJECT_KEYS = (
     "fallEvent",
     "fallNotify",
 )
+# The backend rejects unknown fields (TSOA throw-on-extras) with 422 and drops the whole frame,
+# so these stay off until its receiver accepts them.
+DETECTION_SOURCE_KEYS = ("detectionSource", "visualTrackingScore", "detectionAgeSeconds")
 CALLBACK_FACE_KEYS = ("confidence", "bbox")
 
 
@@ -222,7 +226,10 @@ def _pick(item: dict, keys: tuple[str, ...]) -> dict:
 def api_callback_payload(payload: dict) -> dict:
     body = _pick(payload, CALLBACK_BODY_KEYS)
     if isinstance(body.get("objects"), list):
-        body["objects"] = [_pick(item, CALLBACK_OBJECT_KEYS) if isinstance(item, dict) else item for item in body["objects"]]
+        keys = CALLBACK_OBJECT_KEYS
+        if os.environ.get("OBJECT_DETECTION_SOURCE_FIELDS", "0").lower() in {"1", "true", "yes"}:
+            keys = CALLBACK_OBJECT_KEYS[:2] + DETECTION_SOURCE_KEYS + CALLBACK_OBJECT_KEYS[2:]
+        body["objects"] = [_pick(item, keys) if isinstance(item, dict) else item for item in body["objects"]]
     if isinstance(body.get("faces"), list):
         body["faces"] = [_pick(item, CALLBACK_FACE_KEYS) if isinstance(item, dict) else item for item in body["faces"]]
     return body

@@ -43,7 +43,9 @@ class ObjectAnalysisRuntime:
                 if frame is None:
                     raise FileNotFoundError(f"failed to read frame: {job.absolute_path}")
                 started = time.perf_counter()
-                objects, _ = self.detector.detect(frame, job.zone, job.target_classes)
+                stream = job.congestion_sensor_device_id or job.camera.get("id") or "default"
+                stream_state = self.object_states.setdefault(stream, {})
+                objects, _ = self.detector.detect(frame, job.zone, job.target_classes, state=stream_state)
                 threshold = job.zone.get("zoneGapThreshold", 2) if job.zone else 2
                 if not isinstance(threshold, int) or isinstance(threshold, bool) or threshold < 0:
                     threshold = 2
@@ -53,10 +55,9 @@ class ObjectAnalysisRuntime:
                     threshold,
                     **job.tram_policy_options(),
                 )
-                stream = job.congestion_sensor_device_id or job.camera.get("id") or "default"
                 objects = apply_object_events(
                     objects,
-                    self.object_states.setdefault(stream, {}),
+                    stream_state,
                     frame,
                     max(frame.shape[:2]) / 4,
                 )
@@ -78,9 +79,13 @@ def main():
     parser = argparse.ArgumentParser(description="Detect configured objects between two lines.")
     parser.add_argument("--host", default=env_str("ANALYSIS_HOST", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(env_str("ANALYSIS_PORT", "8080")))
-    parser.add_argument("--model", type=Path, default=env_path("OBJECT_MODEL_PATH", "/app/result/models/objects365_yolo26n.onnx"))
+    parser.add_argument("--model", type=Path, default=env_path("OBJECT_MODEL_PATH", "/app/result/models/coco_yolo26l_736x1280.onnx"))
     parser.add_argument("--mobility-model", type=Path, default=env_path("MOBILITY_MODEL_PATH", "/app/result/models/mobility_yolov8s.onnx"))
     parser.add_argument("--device-id", type=int, default=int(env_str("OBJECT_DEVICE_ID", "0")))
+    parser.add_argument("--tensorrt", action="store_true", default=env_str("OBJECT_TENSORRT", "0").lower() in {"1", "true", "yes"})
+    parser.add_argument("--visual-recovery", action="store_true", default=env_str("OBJECT_VISUAL_RECOVERY", "0").lower() in {"1", "true", "yes"})
+    parser.add_argument("--person-relabel", type=lambda value: value.lower() in {"1", "true", "yes"}, default=env_str("OBJECT_PERSON_RELABEL", "1").lower() in {"1", "true", "yes"})
+    parser.add_argument("--confidence", type=float, default=float(env_str("OBJECT_CONFIDENCE", "0.35")))
     parser.add_argument("--analyzed-dir", type=Path, default=env_path("FRAME_ANALYZED_DIR", "/upload/visit_servant/analyzed"))
     parser.add_argument("--result-url", default=env_str("OBJECT_RESULT_URL", "http://api:3535/object/results"))
     parser.add_argument("--api-key", default=env_str("ANALYSIS_API_KEY", ""))
@@ -88,7 +93,7 @@ def main():
 
     analyzed_dir = args.analyzed_dir.resolve()
     runtime = ObjectAnalysisRuntime(
-        YoloDnnDetector(args.model, args.device_id, args.mobility_model),
+        YoloDnnDetector(args.model, args.device_id, args.mobility_model, tensorrt=args.tensorrt, visual_recovery=args.visual_recovery, person_relabel=args.person_relabel, confidence=args.confidence),
         analyzed_dir,
         [analyzed_dir, Path("/upload").resolve()],
         args.result_url,

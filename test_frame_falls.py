@@ -49,6 +49,7 @@ def test_person_is_kept_without_zone_for_independent_fall_analysis(monkeypatch):
     detector = YoloDnnDetector("unused")
     detector.models = [None]
     monkeypatch.setattr(detector, "_detections", lambda frame: iter([("person", 0.9, WIDE)]))
+    monkeypatch.setattr(detector, "_refine_bicycles", lambda frame, detections: detections)
     objects, _ = detector.detect(np.zeros(SHAPE, np.uint8))
     assert len(objects) == 1
     assert objects[0]["class"] == "person" and objects[0]["zoneLevel"] == "safe"

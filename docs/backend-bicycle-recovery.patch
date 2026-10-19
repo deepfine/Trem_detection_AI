@@ -1,0 +1,96 @@
+--- a/src/types/crowd-analysis.ts
++++ b/src/types/crowd-analysis.ts
+@@ -35,6 +35,9 @@
+ }
+ 
+ export interface CrowdDetectedObject {
++    detectionSource?: 'DETECTOR' | 'ROI_REDETECTION' | 'VISUAL_TRACKER';
++    visualTrackingScore?: number;
++    detectionAgeSeconds?: number;
+     class: string;
+     confidence: number;
+     bbox: number[];
+--- a/src/services/crowd-session.client.ts
++++ b/src/services/crowd-session.client.ts
+@@ -113,6 +113,29 @@
+         confidence,
+         bbox,
+     };
++    if (
++        record.detectionSource === 'DETECTOR' ||
++        record.detectionSource === 'ROI_REDETECTION' ||
++        record.detectionSource === 'VISUAL_TRACKER'
++    ) {
++        object.detectionSource = record.detectionSource;
++    }
++    if (
++        typeof record.visualTrackingScore === 'number' &&
++        Number.isFinite(record.visualTrackingScore) &&
++        record.visualTrackingScore >= 0 &&
++        record.visualTrackingScore <= 1
++    ) {
++        object.visualTrackingScore = record.visualTrackingScore;
++    }
++    if (
++        typeof record.detectionAgeSeconds === 'number' &&
++        Number.isFinite(record.detectionAgeSeconds) &&
++        record.detectionAgeSeconds >= 0 &&
++        record.detectionAgeSeconds <= 2
++    ) {
++        object.detectionAgeSeconds = record.detectionAgeSeconds;
++    }
+     const zoneLevel = readZoneLevel(record.zoneLevel);
+     if (zoneLevel) object.zoneLevel = zoneLevel;
+     if (typeof record.zoneName === 'string') object.zoneName = record.zoneName;
+--- a/src/tests/crowd-session.client.unit.test.ts
++++ b/src/tests/crowd-session.client.unit.test.ts
+@@ -309,3 +309,49 @@
+         });
+     });
+ });
++
++describe('bicycle recovery metadata', () => {
++    it('preserves visual-only tracking metadata separately from detector confidence', () => {
++        const object = {
++            class: 'bicycle',
++            confidence: 0.72,
++            bbox: [10, 20, 40, 80],
++            detectionSource: 'VISUAL_TRACKER',
++            visualTrackingScore: 0.93,
++            detectionAgeSeconds: 0.5,
++        };
++        expect(parseCrowdAnalysisResponse(41, { id: 41, objects: [object] })?.objects).toEqual([
++            object,
++        ]);
++    });
++    it('preserves current-frame ROI redetection source', () => {
++        const object = {
++            class: 'bicycle',
++            confidence: 0.8,
++            bbox: [10, 20, 40, 80],
++            detectionSource: 'ROI_REDETECTION',
++        };
++        expect(parseCrowdAnalysisResponse(41, { id: 41, objects: [object] })?.objects).toEqual([
++            object,
++        ]);
++    });
++    it('ignores unknown source and invalid recovery ranges', () => {
++        const object = {
++            class: 'bicycle',
++            confidence: 0.72,
++            bbox: [10, 20, 40, 80],
++        };
++        const response = parseCrowdAnalysisResponse(41, {
++            id: 41,
++            objects: [
++                {
++                    ...object,
++                    detectionSource: 'UNKNOWN_SOURCE',
++                    visualTrackingScore: 1.1,
++                    detectionAgeSeconds: 3,
++                },
++            ],
++        });
++        expect(response?.objects).toEqual([object]);
++    });
++});

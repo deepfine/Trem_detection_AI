@@ -11,7 +11,7 @@ from camera_zones import (
     zones_from_payload,
     zone_file,
 )
-from frame_objects import apply_object_events, apply_tram_policy, objects_in_areas, objects_in_polygons, zone_areas, zone_polygon, zone_polygons, zone_situation_event
+from frame_objects import ZONE_EXIT_FRAMES, apply_object_events, apply_tram_policy, objects_in_areas, objects_in_polygons, zone_areas, zone_polygon, zone_polygons, zone_situation_event
 
 
 def test_parse_camera_folder():
@@ -106,6 +106,7 @@ def test_object_events_track_warning_to_danger_and_suppress_repeats():
     warning = frame("warning", True)
     danger = frame("danger", True)
     staying = frame("danger", True)
+    held = [frame("safe", False) for _ in range(ZONE_EXIT_FRAMES - 1)]
     safe = frame("safe", False)
 
     assert warning["alertEvent"] == "ENTER" and warning["alertNotify"] is True
@@ -114,7 +115,22 @@ def test_object_events_track_warning_to_danger_and_suppress_repeats():
     assert danger["zoneTransition"] == "WARNING_TO_DANGER"
     assert danger["alertEvent"] == "ESCALATE" and danger["alertNotify"] is True
     assert staying["alertEvent"] == "STAY" and staying["alertNotify"] is False
+    assert all(item["alertEvent"] == "STAY" and item["zoneLevel"] == "danger" for item in held)
     assert safe["alertEvent"] == "EXIT" and safe["alertNotify"] is True
+
+
+def test_zone_boundary_flicker_does_not_repeat_exit_and_enter():
+    state = {}
+
+    def frame(level):
+        return apply_object_events([{"class": "bicycle", "confidence": 0.8, "bbox": [10, 10, 30, 50],
+                                     "zoneLevel": level, "zoneName": level}], state, np.zeros((100, 100, 3), np.uint8), max_distance=100)[0]
+
+    events = [frame(level)["alertEvent"] for level in ["warning", "safe", "warning", "safe", "safe", "warning"]]
+    assert events == ["ENTER", "STAY", "STAY", "STAY", "STAY", "STAY"]
+    # A real exit still arrives after the hold, and re-entry is immediate.
+    assert [frame("safe")["alertEvent"] for _ in range(ZONE_EXIT_FRAMES)][-1] == "EXIT"
+    assert frame("danger")["alertEvent"] == "ENTER"
 
 
 def test_zone_situation_is_delivered_without_tram_alert():
@@ -142,7 +158,7 @@ def test_zone_situation_is_delivered_without_tram_alert():
 
     entered = frame("danger")
     staying = frame("danger")
-    left = frame("safe")
+    left = [frame("safe") for _ in range(ZONE_EXIT_FRAMES)][-1]
     assert entered["alert"] is False
     assert entered["alertEvent"] == "ENTER" and entered["alertNotify"] is True
     assert staying["alertEvent"] == "STAY" and staying["alertNotify"] is False

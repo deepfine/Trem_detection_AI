@@ -138,10 +138,13 @@ class AnalysisRuntime:
                 zone = job.zone
             if self.object_detector is not None:
                 try:
+                    stream = job.congestion_sensor_device_id or job.camera.get("id") or "default"
+                    stream_state = self.object_states.setdefault(stream, {})
                     objects, object_ms = self.object_detector.detect(
                         frame,
                         zone,
                         job.target_classes,
+                        state=stream_state,
                     )
                     threshold = zone.get("zoneGapThreshold", 2) if zone else 2
                     if not isinstance(threshold, int) or isinstance(threshold, bool) or threshold < 0:
@@ -152,10 +155,9 @@ class AnalysisRuntime:
                         threshold,
                         **job.tram_policy_options(),
                     )
-                    stream = job.congestion_sensor_device_id or job.camera.get("id") or "default"
                     objects = apply_object_events(
                         objects,
-                        self.object_states.setdefault(stream, {}),
+                        stream_state,
                         frame,
                         max(frame.shape[:2]) / 4,
                     )
@@ -258,9 +260,13 @@ def main():
     parser.add_argument("--analyzed-dir", type=Path, default=env_path("FRAME_ANALYZED_DIR", "/upload/visit_servant/analyzed"))
     parser.add_argument("--result-url", default=env_str("VISIT_SERVANT_RESULT_URL", "http://api:3535/crowd/results"))
     parser.add_argument("--api-key", default=env_str("ANALYSIS_API_KEY", ""))
-    parser.add_argument("--object-model", type=Path, default=env_path("OBJECT_MODEL_PATH", "result/models/objects365_yolo26n.onnx"))
+    parser.add_argument("--object-model", type=Path, default=env_path("OBJECT_MODEL_PATH", "result/models/coco_yolo26l_736x1280.onnx"))
     parser.add_argument("--mobility-model", type=Path, default=env_path("MOBILITY_MODEL_PATH", "result/models/mobility_yolov8s.onnx"))
     parser.add_argument("--object-device-id", type=int, default=int(env_str("OBJECT_DEVICE_ID", "0")))
+    parser.add_argument("--object-tensorrt", action="store_true", default=env_str("OBJECT_TENSORRT", "0").lower() in {"1", "true", "yes"})
+    parser.add_argument("--object-visual-recovery", action="store_true", default=env_str("OBJECT_VISUAL_RECOVERY", "0").lower() in {"1", "true", "yes"})
+    parser.add_argument("--object-person-relabel", type=lambda value: value.lower() in {"1", "true", "yes"}, default=env_str("OBJECT_PERSON_RELABEL", "1").lower() in {"1", "true", "yes"})
+    parser.add_argument("--object-confidence", type=float, default=float(env_str("OBJECT_CONFIDENCE", "0.35")))
     parser.add_argument("--face-model", type=Path, default=env_path("FACE_MODEL_PATH", "result/models/scrfd_det_10g.onnx"))
     parser.add_argument("--face-device-id", type=int, default=int(env_str("FACE_DEVICE_ID", "0")))
     parser.add_argument("--face-det-size", default=env_str("FACE_DET_SIZE", "960x544"))
@@ -273,7 +279,7 @@ def main():
     analyzed_dir = args.analyzed_dir.resolve()
     zone_dir = args.zone_dir.resolve()
     allowed_roots = [analyzed_dir, Path("/upload").resolve()]
-    object_detector = YoloDnnDetector(args.object_model, args.object_device_id, args.mobility_model) if args.object_model.is_file() else None
+    object_detector = YoloDnnDetector(args.object_model, args.object_device_id, args.mobility_model, tensorrt=args.object_tensorrt, visual_recovery=args.object_visual_recovery, person_relabel=args.object_person_relabel, confidence=args.object_confidence) if args.object_model.is_file() else None
     face_width, face_height = (int(value) for value in args.face_det_size.lower().split("x", 1))
     if face_width % 32 or face_height % 32:
         raise ValueError("face detection width and height must be multiples of 32")

@@ -26,7 +26,7 @@ class FakeObjectDetector:
     def load(self):
         return None
 
-    def detect(self, frame, zone=None, target_classes=()):
+    def detect(self, frame, zone=None, target_classes=(), state=None):
         assert frame is not None
         return [{
             "class": "person",

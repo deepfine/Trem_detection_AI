@@ -44,7 +44,7 @@ pip install opencv-python numpy torch onnxruntime-gpu ultralytics insightface no
 
 ```text
 result/models/scrfd_det_10g.onnx
-result/models/objects365_yolo26n.onnx
+result/models/coco_yolo26l_736x1280.onnx
 result/models/mobility_yolov8s.onnx
 result/models/dm_count_qnrf.pth
 ```
@@ -68,7 +68,15 @@ result/models/dm_count_qnrf.pth
 
 사람의 검출 class는 유형 추정과 관계없이 `person`을 유지한다. 아동·성인·이동보조기기 사용자 추정은 `process_blur_anomalies.py`의 기존 `person_group` 출력이며, 서버 객체 응답에는 아직 포함되지 않는다. 추정 근거가 부족하면 `person_uncertain`을 유지한다.
 
-이동수단 모델은 `Bike`, `Pedestrian`, `Scooter`, `Wheelchair` 중 `scooter`, `wheelchair` 검출을 보강한다. 가중치와 Ultralytics 런타임을 서비스에 배포할 때에는 AGPL-3.0 또는 별도 상용 라이선스 조건을 확인한다.
+일반 객체 모델은 COCO 사전학습 YOLO26l을 736×1280 고정 입력으로 사용한다. 선정 근거·속도·정확도 측정은 [객체 검출 모델 교체 기록](docs/detection-model-upgrade.md)을 참조한다. COCO에는 킥보드·휠체어 class가 없으므로 이동수단 모델이 `scooter`, `wheelchair`를 담당한다. 킥보드와 IoU 0.5 이상 겹치는 주 모델의 `bicycle`·`motorcycle`은 제거한다.
+
+이동수단 모델은 `Bike`, `Pedestrian`, `Scooter`, `Wheelchair` 중 `scooter`, `wheelchair` 검출을 보강한다. 프레임 면적의 20%를 넘는 이동수단 박스는 오검출로 제외한다. 가중치와 Ultralytics 런타임을 서비스에 배포할 때에는 AGPL-3.0 또는 별도 상용 라이선스 조건을 확인한다.
+
+```bash
+python export_yolo26.py result/models/coco_yolo26l.pt result/models/coco_yolo26l_736x1280.onnx --imgsz 736 1280
+```
+
+`coco_yolo26l.pt`는 Ultralytics 공식 `yolo26l.pt`(SHA-256 `9fe3c544…3e92`)이다. 이전 Objects365 nano 모델은 다음 절차로 만든다.
 
 ```bash
 curl -L --fail -o yolo26n-objv1-150.pt \
@@ -83,6 +91,8 @@ YOLO("result/models/mobility_yolov8s.pt").export(format="onnx", imgsz=640, simpl
 PY
 mv yolo26n-objv1-150.onnx result/models/objects365_yolo26n.onnx
 ```
+
+YOLO26의 정확도 중심 헤드, 고해상도 ONNX, 모델별 입력 크기, FP16·TensorRT 선택 실행 및 검증 절차는 [YOLO26 적용 기록](docs/yolo26-adoption.md)을 참조한다. 기존 640 모델과 1280 주 모델을 모두 지원하며, 보조 모델은 자체 입력 크기를 유지한다.
 
 ## 쓰러짐 의심 판정
 
@@ -167,7 +177,7 @@ docker run --rm --gpus all \
   --add-host host.docker.internal:host-gateway \
   -e OBJECT_DEVICE_ID=0 \
   -e OBJECT_RESULT_URL=http://host.docker.internal:3535/object/results \
-  -v "$(pwd)/result/models/objects365_yolo26n.onnx:/app/result/models/objects365_yolo26n.onnx:ro" \
+  -v "$(pwd)/result/models/coco_yolo26l_736x1280.onnx:/app/result/models/coco_yolo26l_736x1280.onnx:ro" \
   -v "$(pwd)/result/models/mobility_yolov8s.onnx:/app/result/models/mobility_yolov8s.onnx:ro" \
   -v "/upload/visit_servant/analyzed:/upload/visit_servant/analyzed:ro" \
   trem-object-ai
@@ -276,14 +286,21 @@ python crowd_analysis_server.py \
 | `CROWD_MODEL_PATH`         | `result/models/dm_count_qnrf.pth` | DM-Count 가중치      |
 | `CROWD_DEVICE`             | `cuda:0`                          | 추론 장치            |
 | `VISIT_SERVANT_RESULT_URL` | `http://api:3535/crowd/results`   | 결과 회신 URL        |
-| `OBJECT_MODEL_PATH`        | `result/models/objects365_yolo26n.onnx` | 일반 객체 모델 |
+| `OBJECT_MODEL_PATH`        | `result/models/coco_yolo26l_736x1280.onnx` | 일반 객체 모델 |
 | `MOBILITY_MODEL_PATH`      | `result/models/mobility_yolov8s.onnx` | 킥보드·휠체어 보강 모델 |
 | `OBJECT_DEVICE_ID`         | `0` | 객체 탐지 GPU ID |
+| `OBJECT_TENSORRT`          | `0` | `1`이면 TensorRT FP16을 우선 사용한다. TensorRT 초기화 실패 시 로딩을 실패 처리한다. |
+| `OBJECT_VISUAL_RECOVERY`   | `0` | 정지 자전거의 영상 일치 기반 보정. 백엔드의 검출 출처 필드 보존 후 활성화한다. |
+| `OBJECT_CONFIDENCE`        | `0.35` (이미지 `0.55`) | 주 모델 출력 임계값. 현장 미세조정 모델은 `0.55`로 운영한다. 킥보드·휠체어(이동수단 모델)는 `0.35`를 유지한다. |
+| `OBJECT_DETECTION_SOURCE_FIELDS` | `0` | `detectionSource`·`visualTrackingScore`·`detectionAgeSeconds`를 callback에 포함한다. 현재 백엔드는 정의되지 않은 필드를 422로 거부하므로 수신기 반영 후에만 `1`로 설정한다. |
+| `OBJECT_PERSON_RELABEL`    | `1` (이미지 `0`) | 이동수단 모델로 `person`을 `bicycle`로 바꾸는 이전 nano 모델용 보정. 미설정 시 기존 동작을 유지하고, Dockerfile은 YOLO26l과 함께 `0`으로 지정한다. YOLO26l에서는 보행자·탑승자를 자전거로 바꾸므로 끈다. |
 | `ANALYSIS_API_KEY`         | 비움                                | `X-Analysis-Key`   |
 
 요청 본문은 `id`, `frame_abs_path`(또는 `frame_path`), `congestionSensorDeviceId`를 필수 식별 정보로 사용한다. 거리 판정 시 `tramZone`과 선택 정책 필드를 추가한다. 결과는 `countedPeople`, 객체·얼굴 좌표, 구역 판정, 알림 정보 및 `status=COMPLETED|FAILED`를 포함한다.
 
 ## 통합 분석
+
+정지 자전거의 누락 원인, 현재 프레임 영역 재검출, 선택적 영상 보정 및 백엔드 수정안은 [자전거 누락 개선 기록](docs/bicycle-miss-upgrade.md)을 참조한다.
 
 4 FPS로 얼굴 블러·객체 탐지·위험 판정을 수행하고, DM-Count는 4개 분석 프레임마다 실행한다. 이 설정에서 군중 수 갱신 주기는 1초이다.
 

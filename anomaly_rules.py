@@ -12,7 +12,9 @@ ANIMAL_CLASSES = {
     "jellyfish", "butterfly", "dolphin", "shark", "crab", "scallop",
     "starfish", "lobster",
 }
-OBSTACLE_CLASSES = {"person", "bicycle", "motorcycle", "scooter", "wheelchair", "animal"}
+# Vehicles on the track are obstacles too; COCO "train" is left out because the tram itself is detected as one.
+VEHICLE_CLASSES = {"car", "bus", "truck"}
+OBSTACLE_CLASSES = {"person", "bicycle", "motorcycle", "scooter", "wheelchair", "animal"} | VEHICLE_CLASSES
 
 
 def normalize_class(label):

@@ -62,7 +62,7 @@ result/models/dm_count_qnrf.pth
 | 이동수단 | 오토바이 | `motorcycle` | 검출 가능 |
 | 이동수단 | 킥보드 | `scooter` | 이동수단 보조 모델 사용. 탑승자만 `person`으로 검출될 수 있음 |
 | 동물 | 고양이, 강아지 등 | `animal` | 모델에서 검출한 동물 종류를 단일 class로 통합 |
-| 기타 | 승용차, 버스, 트럭 | `car`, `bus`, `truck` | 분류 판정에서 제외. `targetClasses`로 요청해도 결과에서 제외 |
+| 이동수단 | 승용차, 버스, 트럭 | `car`, `bus`, `truck` | 검출 가능. COCO `train`은 바리케이드 오검출·트램 자체 검출로 제외 |
 
 동물 대상은 `anomaly_rules.py`의 `ANIMAL_CLASSES`에 정의한다. 기본 대상에서 카트·가방·여행가방도 제외한다. `targetClasses`는 기본 대상 중 분석할 클래스를 선택하며, 생략 시 전체 기본 대상을 사용한다. 모델의 동물 종류별 라벨은 모두 `animal`로 통합한다. `targetClasses`에는 `animal`을 지정한다.
 

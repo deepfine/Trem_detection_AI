@@ -22,9 +22,9 @@ def test_fast_incoming_ignores_non_obstacle_classes():
 
 
 def test_table_targets_apply_to_zone_and_incoming_events():
-    for label in ("animal", "cat", "dog", "bird", "rabbit", "scooter", "wheelchair"):
+    for label in ("animal", "cat", "dog", "bird", "rabbit", "scooter", "wheelchair", "car", "bus", "truck"):
         assert classify_event(label, (10, 10, 30, 30), [], ZONE, direction_vector("down"), 25, 650, 0.75) == "masked_zone_obstacle"
-    for label in ("car", "bus", "truck", "cart", "backpack", "suitcase"):
+    for label in ("train", "cart", "backpack", "suitcase"):
         assert classify_event(label, (10, 10, 30, 30), [], ZONE, direction_vector("down"), 25, 650, 0.75) == ""
         assert classify_event(label, (200, 80, 240, 120), [(220, 20), (220, 120)], ZONE, direction_vector("down"), 25, 650, 0.75) == ""
 

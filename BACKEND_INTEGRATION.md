@@ -103,7 +103,7 @@ Content-Type: application/json
   "forwardZoneGapThreshold": 3,
   "rearZoneGapThreshold": 1,
   "failSafeOnMissingTramPosition": true,
-  "targetClasses": ["person", "bicycle", "motorcycle", "scooter", "wheelchair", "animal"],
+  "targetClasses": ["person", "bicycle", "motorcycle", "scooter", "wheelchair", "car", "bus", "truck", "animal"],
   "zone": {
     "width": 1280,
     "height": 720,
@@ -132,7 +132,7 @@ Content-Type: application/json
 | `congestionSensorDeviceId` | 권장 | 카메라·센서 식별자 |
 | `frame_abs_path` 또는 `frame_path` | 필수 | AI 컨테이너에서도 접근 가능한 JPEG 경로 |
 | `zone` | 객체 전용 endpoint에서 필수 | 영역 좌표 JSON. 미전달 시 요청은 접수되지만 객체 결과는 비어 있음 |
-| `targetClasses` | 선택 | 생략 시 사람·자전거·오토바이·킥보드·휠체어·동물 사용. 지정 시 기본 대상 중 선택하며 차량·카트·가방은 제외 |
+| `targetClasses` | 선택 | 생략 시 사람·자전거·오토바이·킥보드·휠체어·승용차·버스·트럭·동물 사용. 지정 시 기본 대상 중 선택하며 `train`·카트·가방은 제외 |
 | `tramZone` | 접근 판정 시 필수 | 현재 트램 Zone 번호 |
 | `tramDirection` | 선택 | Zone 번호 증가 방향 `1`, 감소 방향 `-1`, 방향 미적용 `0` |
 | `tramZoneUncertainty` | 선택 | 트램 Zone 후보 범위, 기본값 `0` |
@@ -142,7 +142,7 @@ Content-Type: application/json
 | `rearZoneGapThreshold` | 선택 | 후방 허용 Zone 간격 |
 | `failSafeOnMissingTramPosition` | 선택 | `tramZone` 누락 시 사람 알림 유지 여부, 기본값 `false` |
 
-사람의 class는 성인·아동·교통약자 구분 없이 `person`을 유지한다. 기존 영상 처리 경로의 유형 추정 결과는 서버 응답에 포함되지 않는다. 동물은 종류와 관계없이 `animal`로 반환한다. 킥보드는 보조 모델의 `scooter` 검출을 사용하며, 탑승자만 `person`으로 검출될 수 있다. 세부 대상 목록은 `anomaly_rules.py`의 `ANIMAL_CLASSES` 및 `OBSTACLE_CLASSES`를 기준으로 한다.
+사람의 class는 성인·아동·교통약자 구분 없이 `person`을 유지한다. 기존 영상 처리 경로의 유형 추정 결과는 서버 응답에 포함되지 않는다. 동물은 종류와 관계없이 `animal`로 반환한다. 킥보드는 보조 모델의 `scooter` 검출을 사용하며, 탑승자만 `person`으로 검출될 수 있다. 차량은 `car`, `bus`, `truck`으로 반환하며 COCO `train`은 바리케이드 오검출과 트램 자체 검출 때문에 제외한다. 세부 대상 목록은 `anomaly_rules.py`의 `ANIMAL_CLASSES` 및 `OBSTACLE_CLASSES`를 기준으로 한다.
 
 정상 요청은 다음 응답을 즉시 반환한다.
 

@@ -59,22 +59,22 @@ def test_detector_merges_objects365_and_mobility_names():
     assert [item[0] for item in detector._detections(frame)] == ["cart", "scooter"]
 
 
-def test_default_targets_include_animals_and_exclude_other_objects():
+def test_default_targets_include_animals_and_vehicles_and_exclude_other_objects():
     polygon = [(0, 0), (100, 0), (100, 100), (0, 100)]
-    included = ["person", "bicycle", "motorcycle", "scooter", "wheelchair", "cat", "dog", "bird", "rabbit"]
-    excluded = ["car", "bus", "truck", "cart", "backpack", "suitcase"]
+    included = ["person", "bicycle", "motorcycle", "scooter", "wheelchair", "car", "bus", "truck", "cat", "dog", "bird", "rabbit"]
+    excluded = ["train", "cart", "backpack", "suitcase"]
     detections = [(label, 0.9, (10, 10, 30, 30)) for label in included + excluded]
-    expected = included[:5] + ["animal"] * 4
+    expected = included[:8] + ["animal"] * 4
     assert [item["class"] for item in objects_in_zone(detections, polygon, DEFAULT_TARGET_CLASSES)] == expected
     # A request cannot re-enable objects outside the agreed classification scope.
     assert [item["class"] for item in objects_in_zone(detections, polygon, set(included + excluded))] == expected
 
 
-def test_detector_normalizes_wild_bird_and_filters_vehicles():
+def test_detector_normalizes_wild_bird_and_filters_tram():
     detector = YoloDnnDetector("unused.onnx")
     detector.models = [
         (FakeSession(np.array([[[10, 10, 30, 30, 0.9, 0], [40, 10, 60, 30, 0.9, 1]]], np.float32)),
-         {0: "wild bird", 1: "car"}, True, None),
+         {0: "wild bird", 1: "train"}, True, None),
     ]
     frame = np.zeros((640, 640, 3), np.uint8)
     zone = {"width": 640, "height": 640, "zones": [
@@ -146,7 +146,7 @@ def test_raw_head_keeps_best_class_per_anchor_and_per_class_thresholds():
     detector = YoloDnnDetector("unused", confidence=.35)
     detector.models = [(FakeSession(output), {0: "person", 1: "bicycle", 2: "car"}, False, None)]
     detections = list(detector._detections(np.zeros((640, 640, 3), np.uint8)))
-    # Weak person stays a proposal, weak bicycle is dropped, car is kept here and removed by target filtering.
+    # Weak person stays a proposal, weak bicycle is dropped, car passes the base threshold.
     assert [(label, round(score, 2), box) for label, score, box in detections] == [
         ("car", .9, (490, 290, 510, 310)), ("bicycle", .4, (190, 190, 210, 210)), ("person", .2, (90, 80, 110, 120))]
 

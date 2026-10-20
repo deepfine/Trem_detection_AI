@@ -18,8 +18,9 @@ ENV PYTHONUNBUFFERED=1 \
     CROWD_MODEL_PATH=/app/result/models/dm_count_qnrf.pth \
     CROWD_DEVICE=cuda:0 \
     VISIT_SERVANT_RESULT_URL=http://api:3535/crowd/results \
-    OBJECT_MODEL_PATH=/app/result/models/ft_yolo26l_736x1280_20261019.onnx \
+    OBJECT_MODEL_PATH=/app/result/models/ft3_yolo26l_736x1280_20261020.onnx \
     OBJECT_CONFIDENCE=0.55 \
+    OBJECT_CLASS_CONFIDENCE=car=0.45,bus=0.45,truck=0.45,animal=0.45,person=0.65,bicycle=0.5 \
     OBJECT_PERSON_RELABEL=0 \
     MOBILITY_MODEL_PATH=/app/result/models/mobility_yolov8s.onnx \
     OBJECT_DEVICE_ID=0 \

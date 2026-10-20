@@ -292,6 +292,7 @@ python crowd_analysis_server.py \
 | `OBJECT_TENSORRT`          | `0` | `1`이면 TensorRT FP16을 우선 사용한다. TensorRT 초기화 실패 시 로딩을 실패 처리한다. |
 | `OBJECT_VISUAL_RECOVERY`   | `0` | 정지 자전거의 영상 일치 기반 보정. 백엔드의 검출 출처 필드 보존 후 활성화한다. |
 | `OBJECT_CONFIDENCE`        | `0.35` (이미지 `0.55`) | 주 모델 출력 임계값. 현장 미세조정 모델은 `0.55`로 운영한다. 킥보드·휠체어(이동수단 모델)는 `0.35`를 유지한다. |
+| `OBJECT_CLASS_CONFIDENCE`  | 없음 | class별 임계값(예: `car=0.45,animal=0.45,person=0.65,bicycle=0.5`). 지정하지 않은 class는 `OBJECT_CONFIDENCE`를 쓴다. |
 | `OBJECT_DETECTION_SOURCE_FIELDS` | `0` | `detectionSource`·`visualTrackingScore`·`detectionAgeSeconds`를 callback에 포함한다. 현재 백엔드는 정의되지 않은 필드를 422로 거부하므로 수신기 반영 후에만 `1`로 설정한다. |
 | `OBJECT_PERSON_RELABEL`    | `1` (이미지 `0`) | 이동수단 모델로 `person`을 `bicycle`로 바꾸는 이전 nano 모델용 보정. 미설정 시 기존 동작을 유지하고, Dockerfile은 YOLO26l과 함께 `0`으로 지정한다. YOLO26l에서는 보행자·탑승자를 자전거로 바꾸므로 끈다. |
 | `ANALYSIS_API_KEY`         | 비움                                | `X-Analysis-Key`   |

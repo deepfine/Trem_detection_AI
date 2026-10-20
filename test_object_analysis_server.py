@@ -151,6 +151,22 @@ def test_raw_head_keeps_best_class_per_anchor_and_per_class_thresholds():
         ("car", .9, (490, 290, 510, 310)), ("bicycle", .4, (190, 190, 210, 210)), ("person", .2, (90, 80, 110, 120))]
 
 
+def test_class_confidence_lowers_animal_cut_without_moving_other_classes():
+    output = np.array([[[100, 100, 20, 20, .4, .01, .01], [300, 300, 20, 20, .01, .4, .01], [500, 300, 20, 20, .01, .01, .4]]], np.float32)
+    detector = YoloDnnDetector("unused", confidence=.55, class_confidence={"animal": .35})
+    detector.models = [(FakeSession(output), {0: "dog", 1: "bicycle", 2: "car"}, False, None)]
+    zone = {"width": 640, "height": 640, "zones": [{"name": "danger-1", "level": "danger", "points": [[0, 0], [640, 0], [640, 640], [0, 640]]}]}
+    assert [item["class"] for item in detector.detect(np.zeros((640, 640, 3), np.uint8), zone)[0]] == ["animal"]
+
+
+def test_class_confidence_parser():
+    from object_analysis_server import parse_class_confidence
+    assert parse_class_confidence("") == {}
+    assert parse_class_confidence(" Animal=0.35, car=0.4 ") == {"animal": .35, "car": .4}
+    with pytest.raises(ValueError):
+        parse_class_confidence("animal=1.5")
+
+
 @pytest.mark.parametrize("person_relabel,expected", [(False, "person"), (True, "bicycle")])
 def test_person_to_bicycle_relabel_is_opt_in(monkeypatch, person_relabel, expected):
     detector = YoloDnnDetector("unused", person_relabel=person_relabel)

@@ -75,6 +75,17 @@ class ObjectAnalysisRuntime:
                 self.jobs.task_done()
 
 
+def parse_class_confidence(value):
+    """"animal=0.35, car=0.4" -> {"animal": 0.35, "car": 0.4}; empty means no overrides."""
+    thresholds = {}
+    for item in filter(None, (part.strip() for part in value.split(","))):
+        label, _, number = item.partition("=")
+        if not label.strip() or not 0 < float(number) <= 1:
+            raise ValueError(f"invalid class threshold: {item}")
+        thresholds[label.strip().lower()] = float(number)
+    return thresholds
+
+
 def main():
     parser = argparse.ArgumentParser(description="Detect configured objects between two lines.")
     parser.add_argument("--host", default=env_str("ANALYSIS_HOST", "0.0.0.0"))
@@ -86,6 +97,8 @@ def main():
     parser.add_argument("--visual-recovery", action="store_true", default=env_str("OBJECT_VISUAL_RECOVERY", "0").lower() in {"1", "true", "yes"})
     parser.add_argument("--person-relabel", type=lambda value: value.lower() in {"1", "true", "yes"}, default=env_str("OBJECT_PERSON_RELABEL", "1").lower() in {"1", "true", "yes"})
     parser.add_argument("--confidence", type=float, default=float(env_str("OBJECT_CONFIDENCE", "0.35")))
+    parser.add_argument("--class-confidence", type=parse_class_confidence, default=parse_class_confidence(env_str("OBJECT_CLASS_CONFIDENCE", "")),
+                        help="per-class thresholds overriding --confidence, e.g. animal=0.35,car=0.4")
     parser.add_argument("--analyzed-dir", type=Path, default=env_path("FRAME_ANALYZED_DIR", "/upload/visit_servant/analyzed"))
     parser.add_argument("--result-url", default=env_str("OBJECT_RESULT_URL", "http://api:3535/object/results"))
     parser.add_argument("--api-key", default=env_str("ANALYSIS_API_KEY", ""))
@@ -93,7 +106,8 @@ def main():
 
     analyzed_dir = args.analyzed_dir.resolve()
     runtime = ObjectAnalysisRuntime(
-        YoloDnnDetector(args.model, args.device_id, args.mobility_model, tensorrt=args.tensorrt, visual_recovery=args.visual_recovery, person_relabel=args.person_relabel, confidence=args.confidence),
+        YoloDnnDetector(args.model, args.device_id, args.mobility_model, tensorrt=args.tensorrt, visual_recovery=args.visual_recovery, person_relabel=args.person_relabel, confidence=args.confidence,
+                        class_confidence=args.class_confidence),
         analyzed_dir,
         [analyzed_dir, Path("/upload").resolve()],
         args.result_url,

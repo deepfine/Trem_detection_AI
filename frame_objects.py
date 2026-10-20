@@ -357,7 +357,7 @@ def _raw_candidates(output, names, thresholds):
 
 class YoloDnnDetector:
     def __init__(self, model: Path, device_id=0, mobility_model: Path | None = None, size=640, confidence=0.35, nms=0.45, tensorrt=False, visual_recovery=False,
-                 person_relabel=True, mobility_confidence=0.35):
+                 person_relabel=True, mobility_confidence=0.35, class_confidence=None):
         self.model = Path(model)
         self.mobility_model = Path(mobility_model) if mobility_model else None
         self.device_id = device_id
@@ -365,12 +365,17 @@ class YoloDnnDetector:
         self.confidence = confidence
         # Scooters and wheelchairs come from the mobility model, whose calibration does not follow the main model.
         self.mobility_confidence = mobility_confidence
+        # Per-class overrides of the main-model threshold, e.g. {"animal": 0.35}; small dogs score below the person/bicycle cut.
+        self.class_confidence = dict(class_confidence or {})
         self.nms = nms
         self.tensorrt = tensorrt
         self.visual_recovery = visual_recovery
         # Legacy nano-model fix kept as default; with COCO yolo26l every relabeled box was a real pedestrian or rider.
         self.person_relabel = person_relabel
         self.models = []
+
+    def _threshold(self, label, mobility=False):
+        return self.mobility_confidence if mobility else self.class_confidence.get(label, self.confidence)
 
     def _input_details(self, session):
         model_input = session.get_inputs()[0]
@@ -456,7 +461,7 @@ class YoloDnnDetector:
                 for x1, y1, x2, y2, score, class_id in output:
                     label = normalize_class(CLASS_ALIASES.get(names[int(class_id)].lower(), names[int(class_id)].lower()))
                     # Weak person boxes are refinement proposals, filtered before output.
-                    base = self.mobility_confidence if allowed is not None else self.confidence
+                    base = self._threshold(label, allowed is not None)
                     threshold = min(base, 0.1) if label == "person" else base
                     if score >= threshold and (allowed is None or label in allowed):
                         box = original_box(x1, y1, x2, y2)
@@ -468,7 +473,7 @@ class YoloDnnDetector:
             thresholds = np.full(max(names) + 1, np.inf, np.float32)
             for class_id, label in labels.items():
                 if allowed is None or label in allowed:
-                    base = self.mobility_confidence if allowed is not None else self.confidence
+                    base = self._threshold(label, allowed is not None)
                     thresholds[class_id] = min(base, 0.1) if label == "person" else base
             # Vectorized: a per-anchor Python loop cost ~18 ms on 1280-wide inputs.
             raw_ids, raw_scores, raw_boxes = _raw_candidates(output, names, thresholds)
@@ -488,7 +493,7 @@ class YoloDnnDetector:
             for class_id in sorted(set(class_ids)):
                 indices = [i for i, value in enumerate(class_ids) if value == class_id]
                 label = normalize_class(CLASS_ALIASES.get(names[class_id].lower(), names[class_id].lower()))
-                base = self.mobility_confidence if allowed is not None else self.confidence
+                base = self._threshold(label, allowed is not None)
                 threshold = min(base, 0.1) if label == "person" else base
                 selected = cv2.dnn.NMSBoxes([boxes[i] for i in indices], [scores[i] for i in indices], threshold, self.nms)
                 keep.extend(indices[int(i)] for i in np.asarray(selected).reshape(-1))
@@ -612,7 +617,7 @@ class YoloDnnDetector:
         if self.person_relabel:
             detections = self._refine_bicycles(frame, detections)
         detections = [item for item in detections
-                      if item[1] >= (self.mobility_confidence if item[0] in {"scooter", "wheelchair"} else self.confidence)]
+                      if item[1] >= self._threshold(item[0], item[0] in {"scooter", "wheelchair"})]
         # COCO main models have no scooter class and call kick scooters bicycles; the mobility model decides.
         scooters = [box for label, _, box in detections if label == "scooter"]
         detections = [item for item in detections

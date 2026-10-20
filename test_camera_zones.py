@@ -186,6 +186,24 @@ def test_new_person_where_a_walker_vanished_still_enters(monkeypatch):
     assert newcomer["trackId"] != first and newcomer["alertEvent"] == "ENTER"
 
 
+def test_neighbouring_parked_bikes_do_not_swap_ids(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("frame_objects.time.monotonic", lambda: now[0])
+    state, image = {}, np.zeros((200, 200, 3), np.uint8)
+    inside = {"class": "bicycle", "confidence": 0.6, "bbox": [40, 100, 80, 160], "zoneLevel": "warning", "zoneName": "w"}
+    outside = {"class": "bicycle", "confidence": 0.6, "bbox": [70, 60, 115, 110], "zoneLevel": "safe", "zoneName": "safe-default"}
+    events = []
+    # Both are seen at first; afterwards only one of the two is detected per stretch, as near the threshold.
+    for step in range(60):
+        now[0] = step * 0.5
+        seen = [inside, outside] if step < 6 else [inside] if (step // 3) % 2 == 0 else [outside]
+        out = apply_object_events([dict(item) for item in seen], state, image, 100)
+        events += [(item["bbox"][0], item["trackId"], item["alertEvent"]) for item in out]
+    assert len({track for x, track, _ in events if x == 40}) == 1
+    assert [event for x, _, event in events if x == 40].count("ENTER") == 1
+    assert not any(event == "EXIT" for _, _, event in events)
+
+
 def test_zone_situation_is_delivered_without_tram_alert():
     assert zone_situation_event(None, "danger", "ENTER_DANGER") == "ENTER"
     assert zone_situation_event("safe", "warning", "SAFE_TO_WARNING") == "ENTER"

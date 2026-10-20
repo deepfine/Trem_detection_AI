@@ -198,8 +198,14 @@ def _appearance_distance(first, second):
 def _tracking_distance(detection, tracked):
     center = detection.points.mean(axis=0)
     predicted = tracked.estimate.mean(axis=0)
-    spatial = float(np.linalg.norm(center - predicted)) / detection.data["maxDistance"]
+    offset = float(np.linalg.norm(center - predicted))
+    spatial = offset / detection.data["maxDistance"]
     if spatial > 1:
+        return 1.0
+    # A parked vehicle's track must not jump to a neighbouring parked one of similar appearance.
+    # People are exempt: someone who waited and starts walking would otherwise get a new id and a second ENTER.
+    size = float(np.max(tracked.estimate[1] - tracked.estimate[0]))
+    if tracked.label != "person" and tracked.age >= 4 and float(np.linalg.norm(tracked.estimate_velocity.mean(axis=0))) < 0.05 * size and offset > 0.5 * size:
         return 1.0
     appearance = 1.0 - float(np.clip(np.dot(detection.embedding, tracked.last_detection.embedding), 0, 1))
     return 0.45 * spatial + 0.55 * appearance

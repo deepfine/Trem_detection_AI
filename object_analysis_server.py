@@ -10,7 +10,7 @@ import cv2
 
 from crowd_analysis_protocol import AnalysisJob, completed_object_payload, failed_payload
 from crowd_analysis_server import env_path, env_str, make_handler, post_result_with_retry
-from frame_objects import YoloDnnDetector, apply_object_events, apply_tram_policy
+from frame_objects import YoloDnnDetector, apply_object_events, apply_tram_policy, parse_class_confidence
 
 
 class ObjectAnalysisRuntime:
@@ -73,17 +73,6 @@ class ObjectAnalysisRuntime:
                 print(f"object callback failed id={job.id} reason={error}", flush=True)
             finally:
                 self.jobs.task_done()
-
-
-def parse_class_confidence(value):
-    """"animal=0.35, car=0.4" -> {"animal": 0.35, "car": 0.4}; empty means no overrides."""
-    thresholds = {}
-    for item in filter(None, (part.strip() for part in value.split(","))):
-        label, _, number = item.partition("=")
-        if not label.strip() or not 0 < float(number) <= 1:
-            raise ValueError(f"invalid class threshold: {item}")
-        thresholds[label.strip().lower()] = float(number)
-    return thresholds
 
 
 def main():

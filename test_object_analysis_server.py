@@ -160,7 +160,7 @@ def test_class_confidence_lowers_animal_cut_without_moving_other_classes():
 
 
 def test_class_confidence_parser():
-    from object_analysis_server import parse_class_confidence
+    from frame_objects import parse_class_confidence
     assert parse_class_confidence("") == {}
     assert parse_class_confidence(" Animal=0.35, car=0.4 ") == {"animal": .35, "car": .4}
     with pytest.raises(ValueError):

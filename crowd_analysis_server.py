@@ -21,7 +21,7 @@ from crowd_analysis_protocol import (
     failed_payload,
     parse_analysis_body,
 )
-from frame_objects import YoloDnnDetector, apply_object_events, apply_tram_policy
+from frame_objects import YoloDnnDetector, apply_object_events, apply_tram_policy, parse_class_confidence
 from frame_faces import ScrfdFaceDetector
 from zone_annotator import start_annotator_thread
 
@@ -267,6 +267,8 @@ def main():
     parser.add_argument("--object-visual-recovery", action="store_true", default=env_str("OBJECT_VISUAL_RECOVERY", "0").lower() in {"1", "true", "yes"})
     parser.add_argument("--object-person-relabel", type=lambda value: value.lower() in {"1", "true", "yes"}, default=env_str("OBJECT_PERSON_RELABEL", "1").lower() in {"1", "true", "yes"})
     parser.add_argument("--object-confidence", type=float, default=float(env_str("OBJECT_CONFIDENCE", "0.35")))
+    parser.add_argument("--object-class-confidence", type=parse_class_confidence, default=parse_class_confidence(env_str("OBJECT_CLASS_CONFIDENCE", "")),
+                        help="per-class thresholds overriding --object-confidence, e.g. animal=0.45,car=0.45")
     parser.add_argument("--face-model", type=Path, default=env_path("FACE_MODEL_PATH", "result/models/scrfd_det_10g.onnx"))
     parser.add_argument("--face-device-id", type=int, default=int(env_str("FACE_DEVICE_ID", "0")))
     parser.add_argument("--face-det-size", default=env_str("FACE_DET_SIZE", "960x544"))
@@ -279,7 +281,7 @@ def main():
     analyzed_dir = args.analyzed_dir.resolve()
     zone_dir = args.zone_dir.resolve()
     allowed_roots = [analyzed_dir, Path("/upload").resolve()]
-    object_detector = YoloDnnDetector(args.object_model, args.object_device_id, args.mobility_model, tensorrt=args.object_tensorrt, visual_recovery=args.object_visual_recovery, person_relabel=args.object_person_relabel, confidence=args.object_confidence) if args.object_model.is_file() else None
+    object_detector = YoloDnnDetector(args.object_model, args.object_device_id, args.mobility_model, tensorrt=args.object_tensorrt, visual_recovery=args.object_visual_recovery, person_relabel=args.object_person_relabel, confidence=args.object_confidence, class_confidence=args.object_class_confidence) if args.object_model.is_file() else None
     face_width, face_height = (int(value) for value in args.face_det_size.lower().split("x", 1))
     if face_width % 32 or face_height % 32:
         raise ValueError("face detection width and height must be multiples of 32")

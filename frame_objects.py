@@ -355,6 +355,17 @@ def _raw_candidates(output, names, thresholds):
     return class_ids[keep], scores[keep], rows[keep, :4]
 
 
+def parse_class_confidence(value):
+    """"animal=0.35, car=0.4" -> {"animal": 0.35, "car": 0.4}; empty means no overrides."""
+    thresholds = {}
+    for item in filter(None, (part.strip() for part in value.split(","))):
+        label, _, number = item.partition("=")
+        if not label.strip() or not 0 < float(number) <= 1:
+            raise ValueError(f"invalid class threshold: {item}")
+        thresholds[label.strip().lower()] = float(number)
+    return thresholds
+
+
 class YoloDnnDetector:
     def __init__(self, model: Path, device_id=0, mobility_model: Path | None = None, size=640, confidence=0.35, nms=0.45, tensorrt=False, visual_recovery=False,
                  person_relabel=True, mobility_confidence=0.35, class_confidence=None):

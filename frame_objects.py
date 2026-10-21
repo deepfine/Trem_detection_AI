@@ -31,6 +31,12 @@ MOBILITY_MAX_AREA = 0.2
 # A person lying on the track scored 0.15-0.87 frame to frame (camera 33, 2026-10-21) and was mostly dropped
 # by the 0.65 person cut. Lying-shaped person boxes (the fall ratio) pass from this score instead.
 LYING_PERSON_CONFIDENCE = 0.35
+# A person confirmed at the person threshold keeps being reported from this score at the same place
+# for a few seconds, so posture changes and partial occlusion do not drop them; new people still need
+# the full threshold. Confirmation, not a held sighting, renews the window, so a ghost cannot persist.
+PERSON_HOLD_CONFIDENCE = 0.35
+PERSON_HOLD_SECONDS = 5.0
+PERSON_HOLD_IOU = 0.5
 CLASS_ALIASES = {
     "bike": "bicycle",
     "pedestrian": "person",
@@ -577,6 +583,30 @@ class YoloDnnDetector:
                 kept_bicycles.append(box)
         return [item for index, item in enumerate(detections) if index not in duplicate_indices]
 
+    def _hold_people(self, detections, state):
+        now = time.monotonic()
+        holds = [hold for hold in state.get("personHold", []) if 0 <= now - hold["confirmed"] <= PERSON_HOLD_SECONDS]
+        kept, used = [], set()
+        for label, score, box in sorted(detections, key=lambda item: -item[1]):
+            if score >= self._output_threshold(label, score, box):
+                kept.append((label, score, box))
+                if label == "person":
+                    match = max(((bbox_iou(box, hold["box"]), i) for i, hold in enumerate(holds) if i not in used), default=(0, None))
+                    if match[0] >= PERSON_HOLD_IOU:
+                        used.add(match[1]); holds[match[1]].update(box=box, confirmed=now)
+                    else:
+                        holds.append({"box": box, "confirmed": now}); used.add(len(holds) - 1)
+                continue
+            if label != "person" or score < PERSON_HOLD_CONFIDENCE:
+                continue
+            match = max(((bbox_iou(box, hold["box"]), i) for i, hold in enumerate(holds) if i not in used), default=(0, None))
+            if match[0] >= PERSON_HOLD_IOU:
+                # Follow the person without renewing the confirmation time.
+                used.add(match[1]); holds[match[1]]["box"] = box
+                kept.append((label, score, box))
+        state["personHold"] = holds[:200]
+        return kept
+
     def _recover_bicycles(self, frame, detections, state):
         now = time.monotonic()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -636,8 +666,10 @@ class YoloDnnDetector:
         detections = list(self._detections(frame))
         if self.person_relabel:
             detections = self._refine_bicycles(frame, detections)
-        detections = [item for item in detections
-                      if item[1] >= self._output_threshold(*item)]
+        if state is not None:
+            detections = self._hold_people(detections, state)
+        else:
+            detections = [item for item in detections if item[1] >= self._output_threshold(*item)]
         # COCO main models have no scooter class and call kick scooters bicycles; the mobility model decides.
         scooters = [box for label, _, box in detections if label == "scooter"]
         detections = [item for item in detections

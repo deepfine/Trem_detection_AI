@@ -169,6 +169,25 @@ def test_lying_person_passes_lower_threshold_than_standing_person():
     assert [(item["class"], item["bbox"]) for item in objects] == [("person", [270, 290, 330, 310])]
 
 
+def test_confirmed_person_is_held_at_lower_score_but_new_person_is_not(monkeypatch):
+    import frame_objects
+    clock = [100.0]
+    monkeypatch.setattr(frame_objects.time, "monotonic", lambda: clock[0])
+    detector = YoloDnnDetector("unused", confidence=.55, class_confidence={"person": .65})
+    state = {}
+    def run(rows):
+        detector.models = [(FakeSession(np.array([rows], np.float32)), {0: "person"}, False, None)]
+        return [item["bbox"] for item in detector.detect(np.zeros((640, 640, 3), np.uint8), state=state)[0]]
+    standing, stranger = [100, 100, 20, 60, .9], [400, 100, 20, 60, .5]
+    assert run([standing, stranger]) == [[90, 70, 110, 130]]
+    clock[0] += 1
+    held = [101, 101, 20, 60, .5]
+    assert run([held, stranger]) == [[91, 71, 111, 131]]
+    # Held sightings do not renew the window: without a confirmation it lapses.
+    clock[0] += frame_objects.PERSON_HOLD_SECONDS
+    assert run([held]) == []
+
+
 def test_class_confidence_parser():
     from frame_objects import parse_class_confidence
     assert parse_class_confidence("") == {}

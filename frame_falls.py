@@ -3,7 +3,9 @@ from __future__ import annotations
 import math
 
 
-FALL_DWELL_SECONDS = 10.0
+# 10 s never completed on camera 33 (2026-10-21): its stream reconnects every ~30 s and drops 13-16 s of frames.
+# A lie-down there was continuously seen for 6.5 s before a gap.
+FALL_DWELL_SECONDS = 6.0
 FALL_BOX_RATIO = 1.2
 # A lying person's score swings around the person threshold, so sightings drop out for a frame or several.
 # At ~2 FPS a 1 s limit restarted the dwell on every miss: a 26 s lie-down on the track never reached 10 s.

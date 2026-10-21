@@ -138,7 +138,7 @@ def test_fall_state_is_isolated_between_people_and_retired_ids(monkeypatch):
         {"class": "person", "confidence": 0.9, "bbox": [260, 100, 300, 220], "zoneLevel": "danger", "alert": True, "alertReason": "TRAM_ZONE_PROXIMITY"},
         {"class": "dog", "confidence": 0.9, "bbox": [210, 250, 350, 300], "zoneLevel": "safe", "alert": False},
     ]
-    for step in range(41):
+    for step in range(int(FALL_DWELL_SECONDS * 4) + 1):
         now[0] = step / 4
         result = apply_object_events(objects, state, frame, 100, max_missed=2)
     assert [item.get("fallState") for item in result] == ["FALL_SUSPECTED", "NORMAL", None]
@@ -165,7 +165,7 @@ def test_fall_observation_is_limited_to_danger_zone(zone, expected, monkeypatch)
     monkeypatch.setattr("frame_objects.time.monotonic", lambda: now[0])
     state = {}
     image = np.zeros(SHAPE, np.uint8)
-    for step in range(41):
+    for step in range(int(FALL_DWELL_SECONDS * 4) + 1):
         now[0] = step / 4
         item = apply_object_events([{"class": "person", "confidence": 0.9, "bbox": WIDE, "zoneLevel": zone, "alert": False}], state, image, 100)[0]
     assert (item["fallEvent"] == "ENTER") is expected

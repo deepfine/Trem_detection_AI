@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from crowd_analysis_protocol import alert_summary, api_callback_payload
-from frame_falls import FALL_DWELL_SECONDS, update_fall_state
+from frame_falls import FALL_DWELL_SECONDS, FALL_GAP_SECONDS, update_fall_state
 from frame_objects import LOST_TRACK_SECONDS, YoloDnnDetector, apply_object_events
 
 
@@ -34,13 +34,23 @@ def test_long_dwell_then_wide_box_can_trigger_without_another_wait():
     assert result["fallEvent"] == "ENTER"
 
 
+def test_short_detection_dropouts_keep_the_dwell():
+    # A lying person drops below the person threshold for a few frames at a time.
+    state = {}
+    for now in np.arange(0, FALL_DWELL_SECONDS + 2.5, 0.5):
+        if int(now * 2) % 6 in (1, 2, 3):
+            continue  # misses ~1.5 s out of every 3 s
+        result = update_fall_state(WIDE, SHAPE, state, float(now))
+    assert result["fallState"] == "FALL_SUSPECTED"
+
+
 def test_motion_missing_frames_and_clipped_boxes_do_not_establish_dwell():
     state = {}
     sample_for(state, WIDE, seconds=FALL_DWELL_SECONDS - 0.25)
     assert update_fall_state([50, 40, 190, 100], SHAPE, state, FALL_DWELL_SECONDS)["fallEvent"] == "NONE"
     assert update_fall_state(WIDE, SHAPE, {}, 100)["fallEvent"] == "NONE"
     sample_for(state, WIDE, start=100, seconds=FALL_DWELL_SECONDS - 0.25)
-    assert update_fall_state(WIDE, SHAPE, state, 100 + FALL_DWELL_SECONDS + 2)["fallEvent"] == "NONE"
+    assert update_fall_state(WIDE, SHAPE, state, 100 + FALL_DWELL_SECONDS + FALL_GAP_SECONDS + 1)["fallEvent"] == "NONE"
     assert sample_for({}, [0, 40, 150, 100])["fallState"] == "UNKNOWN"
     assert update_fall_state([1, 1, 1, 1], SHAPE, {}, 0)["fallState"] == "UNKNOWN"
 

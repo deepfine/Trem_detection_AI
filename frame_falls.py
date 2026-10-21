@@ -5,6 +5,9 @@ import math
 
 FALL_DWELL_SECONDS = 10.0
 FALL_BOX_RATIO = 1.2
+# A lying person's score swings around the person threshold, so sightings drop out for a frame or several.
+# At ~2 FPS a 1 s limit restarted the dwell on every miss: a 26 s lie-down on the track never reached 10 s.
+FALL_GAP_SECONDS = 5.0
 
 
 def update_fall_state(box, frame_shape, state, now, dwell_seconds=FALL_DWELL_SECONDS):
@@ -27,7 +30,7 @@ def update_fall_state(box, frame_shape, state, now, dwell_seconds=FALL_DWELL_SEC
         foot = ((x1 + x2) / 2, y2)
         anchor = state.get("anchor", foot)
         moved = math.dist(foot, anchor) > state.get("radius", max(10.0, box_height * 0.5))
-        if "since" not in state or gap > 1.0 or moved:
+        if "since" not in state or gap > FALL_GAP_SECONDS or moved:
             state.update(since=now, anchor=foot, radius=max(10.0, box_height * 0.5))
         duration = max(0.0, now - state["since"])
         # shortcut: bbox geometry cannot distinguish lying, crouching or merged people.

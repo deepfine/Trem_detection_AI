@@ -159,6 +159,16 @@ def test_class_confidence_lowers_animal_cut_without_moving_other_classes():
     assert [item["class"] for item in detector.detect(np.zeros((640, 640, 3), np.uint8), zone)[0]] == ["animal"]
 
 
+def test_lying_person_passes_lower_threshold_than_standing_person():
+    # Rows: standing person 0.5, lying person 0.5, lying person 0.3 (all below the 0.65 person cut).
+    output = np.array([[[100, 100, 20, 60, .5], [300, 300, 60, 20, .5], [500, 300, 60, 20, .3]]], np.float32)
+    detector = YoloDnnDetector("unused", confidence=.55, class_confidence={"person": .65})
+    detector.models = [(FakeSession(output), {0: "person"}, False, None)]
+    zone = {"width": 640, "height": 640, "zones": [{"name": "danger-1", "level": "danger", "points": [[0, 0], [640, 0], [640, 640], [0, 640]]}]}
+    objects = detector.detect(np.zeros((640, 640, 3), np.uint8), zone)[0]
+    assert [(item["class"], item["bbox"]) for item in objects] == [("person", [270, 290, 330, 310])]
+
+
 def test_class_confidence_parser():
     from frame_objects import parse_class_confidence
     assert parse_class_confidence("") == {}

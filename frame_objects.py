@@ -11,7 +11,7 @@ import onnxruntime as ort
 from norfair import Detection, Tracker
 
 from anomaly_rules import OBSTACLE_CLASSES, normalize_class, point_in_polygon
-from frame_falls import update_fall_state
+from frame_falls import FALL_BOX_RATIO, update_fall_state
 
 
 DEFAULT_TARGET_CLASSES = OBSTACLE_CLASSES
@@ -28,6 +28,9 @@ LOST_TRACK_SECONDS = 60.0
 LOST_TRACK_IOU = 0.5
 # Mobility boxes covering a fifth of a CCTV frame were stretched-input false wheelchairs.
 MOBILITY_MAX_AREA = 0.2
+# A person lying on the track scored 0.15-0.87 frame to frame (camera 33, 2026-10-21) and was mostly dropped
+# by the 0.65 person cut. Lying-shaped person boxes (the fall ratio) pass from this score instead.
+LYING_PERSON_CONFIDENCE = 0.35
 CLASS_ALIASES = {
     "bike": "bicycle",
     "pedestrian": "person",
@@ -388,6 +391,12 @@ class YoloDnnDetector:
     def _threshold(self, label, mobility=False):
         return self.mobility_confidence if mobility else self.class_confidence.get(label, self.confidence)
 
+    def _output_threshold(self, label, score, box):
+        threshold = self._threshold(label, label in {"scooter", "wheelchair"})
+        if label == "person" and box[2] - box[0] >= FALL_BOX_RATIO * (box[3] - box[1]):
+            return min(threshold, LYING_PERSON_CONFIDENCE)
+        return threshold
+
     def _input_details(self, session):
         model_input = session.get_inputs()[0]
         shape = getattr(model_input, "shape", [1, 3, self.size, self.size])
@@ -628,7 +637,7 @@ class YoloDnnDetector:
         if self.person_relabel:
             detections = self._refine_bicycles(frame, detections)
         detections = [item for item in detections
-                      if item[1] >= self._threshold(item[0], item[0] in {"scooter", "wheelchair"})]
+                      if item[1] >= self._output_threshold(*item)]
         # COCO main models have no scooter class and call kick scooters bicycles; the mobility model decides.
         scooters = [box for label, _, box in detections if label == "scooter"]
         detections = [item for item in detections

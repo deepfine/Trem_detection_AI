@@ -1,0 +1,38 @@
+--- a/src/services/analysis-export.service.ts
++++ b/src/services/analysis-export.service.ts
+@@ -44,6 +44,8 @@
+     zoneName: string | null;
+     trackId: number | null;
+     alertEvent: string | null;
++    fallState: string | null;
++    fallEvent: string | null;
+ }
+ 
+ interface ExportAlarmRow {
+@@ -303,6 +305,8 @@
+                 zoneName: typeof object.zoneName === 'string' ? object.zoneName : null,
+                 trackId: typeof object.trackId === 'number' ? object.trackId : null,
+                 alertEvent: typeof object.alertEvent === 'string' ? object.alertEvent : null,
++                fallState: typeof object.fallState === 'string' ? object.fallState : null,
++                fallEvent: typeof object.fallEvent === 'string' ? object.fallEvent : null,
+             },
+         ];
+     });
+@@ -368,6 +372,8 @@
+         '구역이름',
+         '트랙ID',
+         '행동',
++        '쓰러짐상태',
++        '쓰러짐이벤트',
+     ]);
+     for (const row of input.objects) {
+         objects.addRow([
+@@ -381,6 +387,8 @@
+             row.zoneName,
+             row.trackId,
+             row.alertEvent,
++            row.fallState,
++            row.fallEvent,
+         ]);
+     }
+     boldHeader(objects);

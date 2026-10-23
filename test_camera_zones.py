@@ -358,3 +358,14 @@ def test_falling_person_keeps_zone_state():
     frame([600, 300, 625, 360], "danger")
     lying = frame([590, 335, 650, 360], "danger")
     assert lying["alertEvent"] == "STAY" and lying["zoneLevel"] == "danger"
+
+
+def test_zone_hold_fields_reach_backend_payload_only_when_enabled(monkeypatch):
+    from crowd_analysis_protocol import api_callback_payload
+    obj = {"class": "person", "confidence": 0.8, "bbox": [1, 2, 3, 4], "zoneLevel": "danger", "rawZoneLevel": "safe", "zoneHeld": True}
+    # The current backend rejects unknown object fields with 422, losing the whole frame.
+    monkeypatch.delenv("OBJECT_ZONE_HOLD_FIELDS", raising=False)
+    assert "zoneHeld" not in api_callback_payload({"objects": [obj]})["objects"][0]
+    monkeypatch.setenv("OBJECT_ZONE_HOLD_FIELDS", "1")
+    sent = api_callback_payload({"objects": [obj]})["objects"][0]
+    assert sent["rawZoneLevel"] == "safe" and sent["zoneHeld"] is True

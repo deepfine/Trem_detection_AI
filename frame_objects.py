@@ -26,6 +26,12 @@ STATIONARY_EXIT_SECONDS = 60.0
 # Intermittently detected parked objects otherwise got a new id, and a new ENTER, every few frames.
 LOST_TRACK_SECONDS = 60.0
 LOST_TRACK_IOU = 0.5
+# Far people are ~20 px tall and their ids hop to other people: on camera 29 (2026-10-23) a 20 px person's id passed
+# to a 61 px person on the sidewalk, who then showed the zone hold's danger. A box whose longer side changes this much,
+# or that moves this many box sizes in one update, is treated as a new object. The longer side, not the height,
+# so a person falling (tall box to wide box) keeps its state.
+TRACK_JUMP_SCALE = 2.5
+TRACK_JUMP_REACH = 3.0
 # Mobility boxes covering a fifth of a CCTV frame were stretched-input false wheelchairs.
 MOBILITY_MAX_AREA = 0.2
 # A person lying on the track scored 0.15-0.87 frame to frame (camera 33, 2026-10-21) and was mostly dropped
@@ -56,6 +62,16 @@ def same_place(a, b):
     """Overlapping boxes, or centres within half a box for small boxes whose IoU jitters."""
     reach = 0.5 * max(b[2] - b[0], b[3] - b[1])
     return bbox_iou(a, b) >= LOST_TRACK_IOU or math.dist(((a[0] + a[2]) / 2, (a[1] + a[3]) / 2), ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)) <= reach
+
+
+def jumped(a, b):
+    """The box changed scale or place too much to be the same object, whatever the tracker matched."""
+    size_a, size_b = max(a[2] - a[0], a[3] - a[1]), max(b[2] - b[0], b[3] - b[1])
+    if min(size_a, size_b) <= 0:
+        return False
+    if max(size_a, size_b) / min(size_a, size_b) >= TRACK_JUMP_SCALE:
+        return True
+    return math.dist(((a[0] + a[2]) / 2, (a[1] + a[3]) / 2), ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)) > TRACK_JUMP_REACH * max(size_a, size_b)
 
 
 def zone_polygon(zone: dict | None, frame_width: int, frame_height: int):
@@ -293,10 +309,16 @@ def apply_object_events(objects, state, frame, max_distance, max_missed=30, reid
         track_id = aliases[tracked.id]
         seen_now.add(track_id)
         old = previous.get(track_id)
+        # Another object took this id. It gets no zone hold or fall dwell from the last one, but the id's events
+        # still follow on (an EXIT, not a lost EXIT and a second ENTER), so the backend can close what it opened.
+        jump = bool(old) and jumped(old["bbox"], item["bbox"])
+        if jump:
+            old = {**old, "origin": item["bbox"], "lowerFrames": 0, "lowerSince": None}
+            falls[track_id] = {"signaled": falls.get(track_id, {}).get("signaled", False)}
         old_zone = old["zoneLevel"] if old else None
-        zone = item.get("zoneLevel", "safe")
+        zone = raw_zone = item.get("zoneLevel", "safe")
         lower_frames, lower_since = 0, None
-        if old_zone and ZONE_PRIORITY.get(zone, 0) < ZONE_PRIORITY.get(old_zone, 0):
+        if old_zone and ZONE_PRIORITY.get(zone, 0) < ZONE_PRIORITY.get(old_zone, 0) and not jump:
             lower_frames = old.get("lowerFrames", 0) + 1
             lower_since = old.get("lowerSince") or now
             stationary = same_place(item["bbox"], old["origin"])
@@ -317,6 +339,9 @@ def apply_object_events(objects, state, frame, max_distance, max_missed=30, reid
         current = {
             **item,
             "trackId": track_id,
+            # Where the foot point actually is; zoneHeld marks a higher zoneLevel kept by the exit hold.
+            "rawZoneLevel": raw_zone,
+            "zoneHeld": zone != raw_zone,
             "previousZoneLevel": old_zone,
             "zoneTransition": zone_transition,
             "alertEvent": alert_event,

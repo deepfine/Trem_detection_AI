@@ -117,6 +117,9 @@ def test_object_events_track_warning_to_danger_and_suppress_repeats():
     assert danger["alertEvent"] == "ESCALATE" and danger["alertNotify"] is True
     assert staying["alertEvent"] == "STAY" and staying["alertNotify"] is False
     assert all(item["alertEvent"] == "STAY" and item["zoneLevel"] == "danger" for item in held)
+    # The hold is marked, so a box outside the zone can be told from one inside it.
+    assert all(item["zoneHeld"] is True and item["rawZoneLevel"] == "safe" for item in held)
+    assert staying["zoneHeld"] is False and staying["rawZoneLevel"] == "danger"
     assert safe["alertEvent"] == "EXIT" and safe["alertNotify"] is True
 
 
@@ -325,3 +328,33 @@ def test_objects_outside_polygons_are_dropped():
         },
     ]
     assert objects_in_polygons(detections, [], {"person"}) == []
+
+
+def test_id_jumping_to_another_person_does_not_carry_the_danger_hold():
+    # Camera 29, 2026-10-23 16:17: a 20 px far person's id passed to a 61 px person on the sidewalk.
+    state, image = {}, np.zeros((720, 1280, 3), np.uint8)
+
+    def frame(bbox, level):
+        return apply_object_events([{"class": "person", "confidence": 0.8, "bbox": bbox, "zoneLevel": level,
+                                     "zoneName": level}], state, image, max_distance=1000)[0]
+
+    far = frame([898, 182, 905, 205], "danger")
+    near = frame([1053, 286, 1073, 347], "safe")
+    assert far["alertEvent"] == "ENTER"
+    assert near["trackId"] == far["trackId"]  # the tracker did match them
+    # No hold for the new object: the id's danger ends now with an EXIT, so nothing is left open.
+    assert near["zoneLevel"] == "safe" and near["alertEvent"] == "EXIT"
+    assert near["zoneHeld"] is False and near["rawZoneLevel"] == "safe"
+
+
+def test_falling_person_keeps_zone_state():
+    # Standing to lying swaps the box's height and width; the longer side stays, so it is the same person.
+    state, image = {}, np.zeros((720, 1280, 3), np.uint8)
+
+    def frame(bbox, level):
+        return apply_object_events([{"class": "person", "confidence": 0.8, "bbox": bbox, "zoneLevel": level,
+                                     "zoneName": level}], state, image, max_distance=1000)[0]
+
+    frame([600, 300, 625, 360], "danger")
+    lying = frame([590, 335, 650, 360], "danger")
+    assert lying["alertEvent"] == "STAY" and lying["zoneLevel"] == "danger"

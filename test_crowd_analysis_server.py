@@ -260,6 +260,43 @@ def test_failed_payload_keeps_request_id():
     assert "failed to read frame" in payload["errorMessage"]
 
 
+def test_partial_detection_failure_is_recorded_and_does_not_leak_objects(tmp_path, monkeypatch):
+    frame = tmp_path / "a.jpg"
+    write_jpeg(frame)
+    posted = []
+    runtime = AnalysisRuntime(FakeCounter(), tmp_path, [tmp_path], "", "", result_sink=posted.append,
+                              object_detector=FakeObjectDetector())
+    def broken_events(*args):
+        raise RuntimeError("tracker failed")
+    monkeypatch.setattr("crowd_analysis_server.apply_object_events", broken_events)
+    job = parse_analysis_body({"id": 7, "frame_abs_path": str(frame)}, tmp_path, [tmp_path])
+    runtime._run_job(job)
+    body = api_callback_payload(posted[0])
+    assert body["status"] == "COMPLETED"
+    assert body["countedPeople"] == 12
+    assert body["objects"] == []
+    assert body["raw"]["component_errors"] == {"objects": "tracker failed"}
+    assert body["errorMessage"] == "objects: tracker failed"
+    assert "object_ms" not in body["raw"]
+
+
+def test_partial_face_failure_is_recorded_without_discarding_crowd_count(tmp_path):
+    frame = tmp_path / "a.jpg"
+    write_jpeg(frame)
+    class BrokenFaces:
+        def detect(self, frame):
+            raise RuntimeError("face inference failed")
+    posted = []
+    runtime = AnalysisRuntime(FakeCounter(), tmp_path, [tmp_path], "", "", result_sink=posted.append,
+                              face_detector=BrokenFaces())
+    job = parse_analysis_body({"id": 7, "frame_abs_path": str(frame)}, tmp_path, [tmp_path])
+    runtime._run_job(job)
+    assert posted[0]["countedPeople"] == 12
+    assert posted[0]["raw"]["component_errors"] == {"faces": "face inference failed"}
+    assert posted[0]["errorMessage"] == "faces: face inference failed"
+    assert posted[0]["faces"] == []
+
+
 def test_http_accepts_analysis_and_posts_result(tmp_path):
     frame = tmp_path / "27_1" / "a.jpg"
     write_jpeg(frame)

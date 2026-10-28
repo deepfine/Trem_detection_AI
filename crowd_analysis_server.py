@@ -131,6 +131,7 @@ class AnalysisRuntime:
             people, crowd_ms = count_people(frame, self.counter)
             objects, object_ms = [], None
             faces, face_ms = [], None
+            component_errors = {}
             zone = None
             if self.zone_dir is not None and job.congestion_sensor_device_id is not None:
                 zone = load_zone_file(zone_file(self.zone_dir, job.congestion_sensor_device_id))
@@ -162,6 +163,8 @@ class AnalysisRuntime:
                         max(frame.shape[:2]) / 4,
                     )
                 except Exception as error:
+                    objects, object_ms = [], None
+                    component_errors["objects"] = str(error)
                     print(f"object detect failed id={job.id} reason={error}", flush=True)
             if self.face_detector is not None:
                 try:
@@ -169,6 +172,8 @@ class AnalysisRuntime:
                     faces = self.face_detector.detect(frame)
                     face_ms = (time.perf_counter() - face_started) * 1000
                 except Exception as error:
+                    faces, face_ms = [], None
+                    component_errors["faces"] = str(error)
                     print(f"face detect failed id={job.id} reason={error}", flush=True)
             inference_ms = crowd_ms + (object_ms or 0) + (face_ms or 0)
             payload = completed_payload(
@@ -181,6 +186,9 @@ class AnalysisRuntime:
                 faces=faces,
                 face_ms=face_ms,
             )
+            if component_errors:
+                payload["raw"]["component_errors"] = component_errors
+                payload["errorMessage"] = "; ".join(f"{name}: {error}" for name, error in component_errors.items())
             print(
                 f"analysis done id={job.id} people={people} objects={len(objects)} faces={len(faces)} ms={inference_ms:.1f} path={job.absolute_path}",
                 flush=True,

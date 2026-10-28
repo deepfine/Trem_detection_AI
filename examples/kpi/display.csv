@@ -1,0 +1,5 @@
+camera_id,track_id,displayed_at,channel
+1,101,2026-10-21 12:00:10.600,control
+1,102,2026-10-21 12:00:19.500,control
+1,101,2026-10-21 12:00:10.650,glasses
+1,102,2026-10-21 12:00:19.600,glasses

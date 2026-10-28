@@ -1,0 +1,3 @@
+point_id,trial,gt_x_cm,gt_y_cm,meas_x_cm,meas_y_cm
+p1,1,0,0,3,4
+p1,2,0,0,0,0

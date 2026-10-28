@@ -216,8 +216,17 @@ CALLBACK_OBJECT_KEYS = (
 # The backend rejects unknown fields (TSOA throw-on-extras) with 422 and drops the whole frame,
 # so these stay off until its receiver accepts them.
 DETECTION_SOURCE_KEYS = ("detectionSource", "visualTrackingScore", "detectionAgeSeconds")
-# Foot-point zone and whether zoneLevel is the exit hold's; off until the backend accepts them (OBJECT_ZONE_HOLD_FIELDS=1).
+# Foot-point zone and whether zoneLevel is the exit hold's; off until the backend accepts them.
+# OBJECT_ZONE_HOLD_FIELDS=1 sends both; a comma list such as "zoneHeld" sends only the fields the backend declares.
 ZONE_HOLD_KEYS = ("rawZoneLevel", "zoneHeld")
+
+
+def zone_hold_keys() -> tuple[str, ...]:
+    value = os.environ.get("OBJECT_ZONE_HOLD_FIELDS", "0").strip()
+    if value.lower() in {"1", "true", "yes"}:
+        return ZONE_HOLD_KEYS
+    names = {name.strip() for name in value.split(",")}
+    return tuple(key for key in ZONE_HOLD_KEYS if key in names)
 CALLBACK_FACE_KEYS = ("confidence", "bbox")
 
 
@@ -231,8 +240,7 @@ def api_callback_payload(payload: dict) -> dict:
         keys = CALLBACK_OBJECT_KEYS
         if os.environ.get("OBJECT_DETECTION_SOURCE_FIELDS", "0").lower() in {"1", "true", "yes"}:
             keys = CALLBACK_OBJECT_KEYS[:2] + DETECTION_SOURCE_KEYS + CALLBACK_OBJECT_KEYS[2:]
-        if os.environ.get("OBJECT_ZONE_HOLD_FIELDS", "0").lower() in {"1", "true", "yes"}:
-            keys = keys + ZONE_HOLD_KEYS
+        keys = keys + zone_hold_keys()
         body["objects"] = [_pick(item, keys) if isinstance(item, dict) else item for item in body["objects"]]
     if isinstance(body.get("faces"), list):
         body["faces"] = [_pick(item, CALLBACK_FACE_KEYS) if isinstance(item, dict) else item for item in body["faces"]]

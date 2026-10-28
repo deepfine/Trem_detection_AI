@@ -369,3 +369,7 @@ def test_zone_hold_fields_reach_backend_payload_only_when_enabled(monkeypatch):
     monkeypatch.setenv("OBJECT_ZONE_HOLD_FIELDS", "1")
     sent = api_callback_payload({"objects": [obj]})["objects"][0]
     assert sent["rawZoneLevel"] == "safe" and sent["zoneHeld"] is True
+    # The 2026-10-28 backend declares zoneHeld but not rawZoneLevel; sending both got every frame a 422.
+    monkeypatch.setenv("OBJECT_ZONE_HOLD_FIELDS", "zoneHeld")
+    sent = api_callback_payload({"objects": [obj]})["objects"][0]
+    assert sent["zoneHeld"] is True and "rawZoneLevel" not in sent
